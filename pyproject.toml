@@ -1,5 +1,5 @@
 [project]
-name = "nasa-snowflake"
+name = "nasa_snowflake"
 version = "0.1.0"
 description = "NASA → Snowflake ETL pipeline with Dagster"
 requires-python = ">=3.9"
@@ -14,3 +14,4 @@ dependencies = [
     "pandas",
     "h5netcdf"
 ]
+
