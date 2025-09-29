@@ -11,10 +11,8 @@ from dagster import job, op
 BASE_URL = "https://data.gesdisc.earthdata.nasa.gov/data/GLDAS/GLDAS_NOAH025_M.2.1"
 YEARS = [2023, 2024]
 
-# 🔑 Earthdata Token
 EARTHDATA_TOKEN = "eyJ0eXAiOiJKV1QiLCJvcmlnaW4iOiJFYXJ0aGRhdGEgTG9naW4iLCJzaWciOiJlZGxqd3RwdWJrZXlfb3BzIiwiYWxnIjoiUlMyNTYifQ.eyJ0eXBlIjoiVXNlciIsInVpZCI6Im1heWFyMjAwNSIsImV4cCI6MTc2MzU5Njc5OSwiaWF0IjoxNzU4NDA4MjYwLCJpc3MiOiJodHRwczovL3Vycy5lYXJ0aGRhdGEubmFzYS5nb3YiLCJpZGVudGl0eV9wcm92aWRlciI6ImVkbF9vcHMiLCJhY3IiOiJlZGwiLCJhc3N1cmFuY2VfbGV2ZWwiOjN9.IzcEHuwMgdaH_VsYDkNDSRn5vKZ0WGXadtc8cOKlhskX9rcglRgNpmFQkHJeXpix_W5FHy86knW3Cpd7EFcVHXfUTHyjpE8nMjObiGUPEpX_UTHkuRZWMuLXsLpVUlBPXNc9wWWMa7DqTbaRovAnyv7GdTQw3juUpwnxv2-qZPxfU0hNlgeaj4TqroCFAo6eIzMqp1xCFii22ie9gu-bEe6NmprFA0PkKOwyMe-_pe19uCPZ07Bmp6u9BRrc5qO0G-lgICg16Cx7RO2Vx60pjpwa_FLhmO-04qR93C15flALxE40LyfjzW68tJVjIzQMk-2iq-bmnNlzrfcLpm6vzg"
 
-# Snowflake Config
 SNOWFLAKE_ACCOUNT = "KBZQPZO-WX06551"
 SNOWFLAKE_USER = "MAYARHANY1999"
 SNOWFLAKE_AUTHENTICATOR = "externalbrowser"
@@ -22,7 +20,6 @@ SNOWFLAKE_ROLE = "ACCOUNTADMIN"
 SNOWFLAKE_WAREHOUSE = "NASA_WH"
 SNOWFLAKE_DATABASE = "NASA_DB"
 SNOWFLAKE_SCHEMA = "PUBLIC"
-
 
 # ==========================
 # DAGSTER OPS
@@ -43,7 +40,6 @@ def extract_gldas_data():
             data = io.BytesIO(response.content)
             ds = xr.open_dataset(data, engine="h5netcdf")
 
-            # نختار المتغيرات المطلوبة
             vars_needed = ["T2M", "QV2M", "T2MDEW", "U10M", "V10M",
                            "PS", "TQV", "SLP", "T2MWET"]
             ds_sel = ds[vars_needed]
@@ -95,7 +91,7 @@ def load_gldas_to_snowflake(df: pd.DataFrame):
         VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
     """
 
-    batch_size = 1000  # حجم كل batch
+    batch_size = 1000
     data_tuples = [
         (
             row["lat"], row["lon"], row["time"], row["T2M"], row["QV2M"],
@@ -105,7 +101,6 @@ def load_gldas_to_snowflake(df: pd.DataFrame):
         for _, row in df.iterrows()
     ]
 
-    # تقسيم البيانات إلى batches
     for i in range(0, len(data_tuples), batch_size):
         batch = data_tuples[i:i+batch_size]
         cur.executemany(insert_sql, batch)
@@ -114,11 +109,15 @@ def load_gldas_to_snowflake(df: pd.DataFrame):
     cur.close()
     conn.close()
 
-
 # ==========================
-# DAGSTER JOB
+# DAGSTER JOBS
 # ==========================
 @job
 def nasa_gldas_pipeline():
+    data = extract_gldas_data()
+    load_gldas_to_snowflake(data)
+
+@job
+def nasa_temperature_pipeline():
     data = extract_gldas_data()
     load_gldas_to_snowflake(data)
