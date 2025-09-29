@@ -1,1 +1,1 @@
-from .my_pipeline import nasa_temperature_pipeline
+from .my_pipeline import nasa_variables_pipeline
