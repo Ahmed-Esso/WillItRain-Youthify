@@ -4,7 +4,7 @@ import xarray as xr
 import pandas as pd
 import snowflake.connector
 from dagster import job, op
-from earthaccess import EarthAccess
+import earthaccess
 
 # ==========================
 # NASA + Snowflake Config
@@ -123,3 +123,4 @@ def nasa_variables_pipeline():
     data = extract_variables()
     transformed = transform_variables(data)
     load_variables_to_snowflake(transformed)
+
