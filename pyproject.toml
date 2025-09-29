@@ -12,6 +12,6 @@ dependencies = [
     "requests",
     "xarray",
     "pandas",
-    "h5netcdf"
+    "h5netcdf",
+    "earthaccess"
 ]
-
