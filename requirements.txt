@@ -7,3 +7,4 @@ pandas
 xarray
 h5netcdf
 snowflake-connector-python
+earthaccess
