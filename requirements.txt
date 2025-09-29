@@ -1,10 +1,9 @@
 dagster==1.6.12
 dagster-cloud==1.6.12
-dagster
-dagit
+dagit==1.6.12
 requests
 pandas
 xarray
 h5netcdf
 snowflake-connector-python
-earthaccess
+earthaccess>=0.9.1
