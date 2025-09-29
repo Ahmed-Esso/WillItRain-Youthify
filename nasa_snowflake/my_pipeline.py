@@ -1,5 +1,4 @@
 import io
-import requests
 import xarray as xr
 import pandas as pd
 import snowflake.connector
@@ -7,9 +6,8 @@ from dagster import job, op
 import earthaccess
 
 # ==========================
-# NASA + Snowflake Config
+# Snowflake Config
 # ==========================
-EARTHDATA_TOKEN = "eyJ0eXAiOiJKV1QiLCJvcmlnaW4iOiJFYXJ0aGRhdGEgTG9naW4iLCJzaWciOiJlZGxqd3RwdWJrZXlfb3BzIiwiYWxnIjoiUlMyNTYifQ..."
 SNOWFLAKE_ACCOUNT = "KBZQPZO-WX06551"
 SNOWFLAKE_USER = "A7MEDESSO"
 SNOWFLAKE_AUTHENTICATOR = "externalbrowser"
@@ -26,36 +24,30 @@ VARIABLES = ["T2M", "QV2M", "T2MDEW", "U10M", "V10M", "PS", "TQV", "SLP", "T2MWE
 @op
 def extract_variables() -> pd.DataFrame:
     all_data = []
-    earthaccess = EarthAccess(EARTHDATA_TOKEN)
 
-    # Search NASA GLDAS dataset
+    # Login to NASA Earthdata
+    auth = earthaccess.login(strategy="netrc")  # أو "interactive"
+
+    # Search NASA dataset
     results = earthaccess.search_data(
         short_name="M2T1NXSLV",
         version="5.12.4",
-        temporal=("2022-01-01", "2024-12-31"),  # تعديل فترة البحث
-        bounding_box = (24.70, 22.00, 37.35, 31.67)
-  # منطقة القاهرة
+        temporal=("2022-01-01", "2024-12-31"),
+        bounding_box=(24.70, 22.00, 37.35, 31.67)  # القاهرة
     )
 
     print(f"Found {len(results)} files.")
 
-    headers = {"Authorization": f"Bearer {EARTHDATA_TOKEN}"}
+    files = earthaccess.download(results, "./data")
 
-    for record in results:
-        file_url = record["url"]
-        print(f"Fetching: {file_url}")
-
-        response = requests.get(file_url, headers=headers)
-        response.raise_for_status()
-
-        data = io.BytesIO(response.content)
-        ds = xr.open_dataset(data, engine="h5netcdf")
+    for file in files:
+        ds = xr.open_dataset(file, engine="h5netcdf")
 
         for var in VARIABLES:
             if var in ds.variables:
                 df = ds[var].to_dataframe().reset_index()
                 df["variable"] = var
-                df["timestamp"] = pd.to_datetime(record["time_start"])
+                df["timestamp"] = pd.to_datetime(ds.time.values[0])
                 all_data.append(df)
 
     if not all_data:
@@ -73,8 +65,8 @@ def transform_variables(df: pd.DataFrame) -> pd.DataFrame:
         .reset_index()
     )
     transformed.rename(columns={"timestamp": "month"}, inplace=True)
-    transformed["month"] = transformed["timestamp"]
-    transformed["avg_value"] = transformed.iloc[:, 2]  # يأخذ العمود الصحيح
+    transformed["month"] = transformed["month"].astype(int)
+    transformed["avg_value"] = transformed.iloc[:, 2]
     return transformed[["variable", "month", "avg_value"]]
 
 
@@ -123,4 +115,3 @@ def nasa_variables_pipeline():
     data = extract_variables()
     transformed = transform_variables(data)
     load_variables_to_snowflake(transformed)
-
