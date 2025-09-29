@@ -4,15 +4,12 @@ import xarray as xr
 import pandas as pd
 import snowflake.connector
 from dagster import job, op
+from earthaccess import EarthAccess
 
 # ==========================
 # NASA + Snowflake Config
 # ==========================
-BASE_URL = "https://data.gesdisc.earthdata.nasa.gov/data/GLDAS/GLDAS_NOAH025_M.2.1"
-YEARS = [2022, 2023, 2024]
-
-EARTHDATA_TOKEN = "eyJ0eXAiOiJKV1QiLCJvcmlnaW4iOiJFYXJ0aGRhdGEgTG9naW4iLCJzaWciOiJlZGxqd3RwdWJrZXlfb3BzIiwiYWxnIjoiUlMyNTYifQ.eyJ0eXBlIjoiVXNlciIsInVpZCI6Im1heWFyMjAwNSIsImV4cCI6MTc2MzU5Njc5OSwiaWF0IjoxNzU4NDA4MjYwLCJpc3MiOiJodHRwczovL3Vycy5lYXJ0aGRhdGEubmFzYS5nb3YiLCJpZGVudGl0eV9wcm92aWRlciI6ImVkbF9vcHMiLCJhY3IiOiJlZGwiLCJhc3N1cmFuY2VfbGV2ZWwiOjN9.IzcEHuwMgdaH_VsYDkNDSRn5vKZ0WGXadtc8cOKlhskX9rcglRgNpmFQkHJeXpix_W5FHy86knW3Cpd7EFcVHXfUTHyjpE8nMjObiGUPEpX_UTHkuRZWMuLXsLpVUlBPXNc9wWWMa7DqTbaRovAnyv7GdTQw3juUpwnxv2-qZPxfU0hNlgeaj4TqroCFAo6eIzMqp1xCFii22ie9gu-bEe6NmprFA0PkKOwyMe-_pe19uCPZ07Bmp6u9BRrc5qO0G-lgICg16Cx7RO2Vx60pjpwa_FLhmO-04qR93C15flALxE40LyfjzW68tJVjIzQMk-2iq-bmnNlzrfcLpm6vzg"
-
+EARTHDATA_TOKEN = "eyJ0eXAiOiJKV1QiLCJvcmlnaW4iOiJFYXJ0aGRhdGEgTG9naW4iLCJzaWciOiJlZGxqd3RwdWJrZXlfb3BzIiwiYWxnIjoiUlMyNTYifQ..."
 SNOWFLAKE_ACCOUNT = "KBZQPZO-WX06551"
 SNOWFLAKE_USER = "A7MEDESSO"
 SNOWFLAKE_AUTHENTICATOR = "externalbrowser"
@@ -29,13 +26,25 @@ VARIABLES = ["T2M", "QV2M", "T2MDEW", "U10M", "V10M", "PS", "TQV", "SLP", "T2MWE
 @op
 def extract_variables() -> pd.DataFrame:
     all_data = []
+    earthaccess = EarthAccess(EARTHDATA_TOKEN)
+
+    # Search NASA GLDAS dataset
+    results = earthaccess.search_data(
+        short_name="M2T1NXSLV",
+        version="5.12.4",
+        temporal=("2022-01-01", "2024-12-31"),  # تعديل فترة البحث
+        bounding_box = (24.70, 22.00, 37.35, 31.67)
+  # منطقة القاهرة
+    )
+
+    print(f"Found {len(results)} files.")
+
     headers = {"Authorization": f"Bearer {EARTHDATA_TOKEN}"}
 
-    for month in range(1, 13):
-        month_str = f"{month:02d}"
-        file_url = f"{BASE_URL}/{YEAR}/GLDAS_NOAH025_M.A{YEAR}{month_str}.021.nc4"
-
+    for record in results:
+        file_url = record["url"]
         print(f"Fetching: {file_url}")
+
         response = requests.get(file_url, headers=headers)
         response.raise_for_status()
 
@@ -46,8 +55,11 @@ def extract_variables() -> pd.DataFrame:
             if var in ds.variables:
                 df = ds[var].to_dataframe().reset_index()
                 df["variable"] = var
-                df["month"] = month
+                df["timestamp"] = pd.to_datetime(record["time_start"])
                 all_data.append(df)
+
+    if not all_data:
+        raise ValueError("No data found. Check search parameters!")
 
     combined_df = pd.concat(all_data, ignore_index=True)
     return combined_df
@@ -56,11 +68,12 @@ def extract_variables() -> pd.DataFrame:
 @op
 def transform_variables(df: pd.DataFrame) -> pd.DataFrame:
     transformed = (
-        df.groupby(["variable", "month"])
+        df.groupby(["variable", df["timestamp"].dt.month])
         .mean(numeric_only=True)
         .reset_index()
-        .rename(columns={VARIABLES[0]: "avg_value"})
     )
+    transformed.rename(columns={"timestamp": "month"}, inplace=True)
+    transformed["month"] = transformed["timestamp"]
     transformed["avg_value"] = transformed.iloc[:, 2]  # يأخذ العمود الصحيح
     return transformed[["variable", "month", "avg_value"]]
 
@@ -110,4 +123,3 @@ def nasa_variables_pipeline():
     data = extract_variables()
     transformed = transform_variables(data)
     load_variables_to_snowflake(transformed)
-
