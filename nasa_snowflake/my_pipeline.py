@@ -9,7 +9,7 @@ from dagster import job, op
 # NASA + Snowflake Config
 # ==========================
 BASE_URL = "https://data.gesdisc.earthdata.nasa.gov/data/GLDAS/GLDAS_NOAH025_M.2.1"
-YEAR = "2023"
+YEARS = [2022, 2023, 2024]
 
 EARTHDATA_TOKEN = "eyJ0eXAiOiJKV1QiLCJvcmlnaW4iOiJFYXJ0aGRhdGEgTG9naW4iLCJzaWciOiJlZGxqd3RwdWJrZXlfb3BzIiwiYWxnIjoiUlMyNTYifQ.eyJ0eXBlIjoiVXNlciIsInVpZCI6Im1heWFyMjAwNSIsImV4cCI6MTc2MzU5Njc5OSwiaWF0IjoxNzU4NDA4MjYwLCJpc3MiOiJodHRwczovL3Vycy5lYXJ0aGRhdGEubmFzYS5nb3YiLCJpZGVudGl0eV9wcm92aWRlciI6ImVkbF9vcHMiLCJhY3IiOiJlZGwiLCJhc3N1cmFuY2VfbGV2ZWwiOjN9.IzcEHuwMgdaH_VsYDkNDSRn5vKZ0WGXadtc8cOKlhskX9rcglRgNpmFQkHJeXpix_W5FHy86knW3Cpd7EFcVHXfUTHyjpE8nMjObiGUPEpX_UTHkuRZWMuLXsLpVUlBPXNc9wWWMa7DqTbaRovAnyv7GdTQw3juUpwnxv2-qZPxfU0hNlgeaj4TqroCFAo6eIzMqp1xCFii22ie9gu-bEe6NmprFA0PkKOwyMe-_pe19uCPZ07Bmp6u9BRrc5qO0G-lgICg16Cx7RO2Vx60pjpwa_FLhmO-04qR93C15flALxE40LyfjzW68tJVjIzQMk-2iq-bmnNlzrfcLpm6vzg"
 
@@ -110,3 +110,4 @@ def nasa_variables_pipeline():
     data = extract_variables()
     transformed = transform_variables(data)
     load_variables_to_snowflake(transformed)
+
