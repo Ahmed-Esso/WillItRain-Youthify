@@ -11,12 +11,12 @@ from dagster import job, op
 BASE_URL = "https://data.gesdisc.earthdata.nasa.gov/data/GLDAS/GLDAS_NOAH025_M.2.1/2022/"
 FILE_TEMPLATE = "GLDAS_NOAH025_M.A{year}{month:02d}.021.nc4"
 
-EARTHDATA_TOKEN = "eyJ0eXAiOiJKV1QiLCJvcmlnaW4iOiJFYXJ0aGRhdGEgTG9naW4iLCJzaWciOiJlZGxqd3RwdWJrZXlfb3BzIiwiYWxnIjoiUlMyNTYifQ.eyJ0eXBlIjoiVXNlciIsInVpZCI6ImE3bWVkX2Vzc28iLCJleHAiOjE3NjQzNzQzOTksImlhdCI6MTc1OTE1NjcwNSwiaXNzIjoiaHR0cHM6Ly91cnMuZWFydGhkYXRhLm5hc2EuZ292IiwiaWRlbnRpdHlfcHJvdmlkZXIiOiJlZGxfb3BzIiwiYWNyIjoiZWRsIiwiYXNzdXJhbmNlX2xldmVsIjozfQ.37ornZlS0nY1ri4VPKlCpKs763OHwQi0iCFmZ_wp80i_jm_g4OoBMBO8PuzEn6bth9MiUDDO0N3VTClWwJyzr9-ohRCAhnwllaCM0PLJVr7OKQ8nZF7MjjvFXJu4CUh5IPs9ojxGrroY27o-pWRQK7LCv7gstr6xF3szQt3wL0YBrki4EABFxNzm2KetIlkyplYBpGp2HIpfofAZcTFECNIC11qE6L8KwhlTDSi4-OTRGXSOTe3Wd6Ol6QsO6RmyU9iUIbuhb-mBqSVXRxd8s8HFlKqcLHBtT4j1f4qG5P7lpB1wEYTYyAZjI3bppLkYEP6ybYj4Kaoe6moCYqMwAg"
+EARTHDATA_TOKEN = "eyJ0eXAiOiJKV1QiLCJvcmlnaW4iOiJFYXJ0aGRhdGEgTG9naW4iLCJzaWciOiJlZGxqd3RwdWJrZXlfb3BzIiwiYWxnIjoiUlMyNTYifQ..."
 
 # Snowflake Config
 SNOWFLAKE_ACCOUNT = "KBZQPZO-WX06551"
 SNOWFLAKE_USER = "A7MEDESSO"
-SNOWFLAKE_PASSWORD = "Ahmedesso@2005"  # 🔐 أضيفي الباسورد هنا
+SNOWFLAKE_PASSWORD = "Ahmedesso@2005"
 SNOWFLAKE_AUTHENTICATOR = "snowflake"
 SNOWFLAKE_ROLE = "ACCOUNTADMIN"
 SNOWFLAKE_WAREHOUSE = "NASA_WH"
@@ -27,10 +27,10 @@ SNOWFLAKE_SCHEMA = "PUBLIC"
 # DAGSTER OPS
 # ==========================
 @op
-def extract_temperature():
-    """يسحب ملفات سنة 2022 كاملة من NASA Earthdata"""
+def extract_temperature_daily():
+    """يسحب ملفات سنة 2022 كاملة من NASA Earthdata ويحسب درجة الحرارة اليومية"""
     headers = {"Authorization": f"Bearer {EARTHDATA_TOKEN}"}
-    all_months = []
+    all_days = []
 
     year = 2022
     for month in range(1, 13):
@@ -44,13 +44,17 @@ def extract_temperature():
         data = io.BytesIO(response.content)
         ds = xr.open_dataset(data, engine="h5netcdf")
 
-        # ناخد المتوسط لكل شهر
         if "Tair_f_inst" in ds.variables:
-            temp = ds["Tair_f_inst"].mean(dim=["lat", "lon", "time"])
-            avg_val = float(temp.values)
-            all_months.append({"year": year, "month": month, "avg_temperature": avg_val})
+            daily_avg = ds["Tair_f_inst"].mean(dim=["lat", "lon"]).to_dataframe()
+            daily_avg.reset_index(inplace=True)
 
-    df = pd.DataFrame(all_months)
+            for _, row in daily_avg.iterrows():
+                all_days.append({
+                    "date": row["time"].strftime("%Y-%m-%d"),
+                    "avg_temperature": float(row["Tair_f_inst"])
+                })
+
+    df = pd.DataFrame(all_days)
     return df
 
 
@@ -77,23 +81,22 @@ def load_temperature_to_snowflake(df: pd.DataFrame):
     cur = conn.cursor()
 
     cur.execute("""
-        CREATE TABLE IF NOT EXISTS TEMPERATURE (
-            year INT,
-            month INT,
+        CREATE TABLE IF NOT EXISTS DAILY_TEMPERATURE (
+            date DATE,
             avg_temperature FLOAT
         )
     """)
 
     for _, row in df.iterrows():
         cur.execute(
-            "INSERT INTO TEMPERATURE (year, month, avg_temperature) VALUES (%s, %s, %s)",
-            (int(row["year"]), int(row["month"]), float(row["avg_temperature"])),
+            "INSERT INTO DAILY_TEMPERATURE (date, avg_temperature) VALUES (%s, %s)",
+            (row["date"], float(row["avg_temperature"])),
         )
 
     conn.commit()
     cur.close()
     conn.close()
-    print("✅ Year 2022 monthly averages loaded into Snowflake.")
+    print("✅ Year 2022 daily averages loaded into Snowflake.")
 
 
 # ==========================
@@ -101,6 +104,6 @@ def load_temperature_to_snowflake(df: pd.DataFrame):
 # ==========================
 @job
 def nasa_temperature_pipeline():
-    data = extract_temperature()
+    data = extract_temperature_daily()
     transformed = transform_temperature(data)
     load_temperature_to_snowflake(transformed)
