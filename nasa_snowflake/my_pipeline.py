@@ -1,10 +1,8 @@
-import io
 import xarray as xr
 import pandas as pd
 import snowflake.connector
 from dagster import job, op
 import earthaccess
-import os
 
 # ==========================
 # Snowflake Config
@@ -26,24 +24,23 @@ VARIABLES = ["T2M", "QV2M", "T2MDEW", "U10M", "V10M", "PS", "TQV", "SLP", "T2MWE
 def extract_variables() -> pd.DataFrame:
     all_data = []
 
-    # ✅ Login to NASA Earthdata using environment variables
-    auth = earthaccess.login(strategy="environment")
+    # Login باستخدام الـ env vars (EARTHDATA_USERNAME / EARTHDATA_PASSWORD)
+    earthaccess.login(strategy="environment")
 
     # Search NASA dataset
     results = earthaccess.search_data(
         short_name="M2T1NXSLV",
         version="5.12.4",
         temporal=("2022-01-01", "2023-1-1"),
-        bounding_box=(24.70, 22.00, 37.35, 31.67)  # القاهرة
+        bounding_box=(24.70, 22.00, 37.35, 31.67)  # Example Cairo region
     )
 
-    print(f"Found {len(results)} files.")
+    print(f"Found {len(results)} granules.")
 
-    files = earthaccess.download(results, "./data")
+    # Open datasets مباشرة من cloud بدون تحميل
+    datasets = earthaccess.open(results)
 
-    for file in files:
-        ds = xr.open_dataset(file, engine="h5netcdf")
-
+    for ds in datasets:
         for var in VARIABLES:
             if var in ds.variables:
                 df = ds[var].to_dataframe().reset_index()
@@ -116,4 +113,3 @@ def nasa_variables_pipeline():
     data = extract_variables()
     transformed = transform_variables(data)
     load_variables_to_snowflake(transformed)
-
