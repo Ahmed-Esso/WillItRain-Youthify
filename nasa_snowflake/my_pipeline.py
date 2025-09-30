@@ -33,7 +33,7 @@ def extract_variables() -> pd.DataFrame:
     results = earthaccess.search_data(
         short_name="M2T1NXSLV",
         version="5.12.4",
-        temporal=("2022-01-01", "2024-12-31"),
+        temporal=("2022-01-01", "2023-1-1"),
         bounding_box=(24.70, 22.00, 37.35, 31.67)  # القاهرة
     )
 
@@ -116,3 +116,4 @@ def nasa_variables_pipeline():
     data = extract_variables()
     transformed = transform_variables(data)
     load_variables_to_snowflake(transformed)
+
