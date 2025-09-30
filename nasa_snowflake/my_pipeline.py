@@ -1,14 +1,19 @@
 import io
+import requests
 import xarray as xr
 import pandas as pd
 import snowflake.connector
 from dagster import job, op
-import earthaccess
-import os
 
 # ==========================
-# Snowflake Config
+# NASA + Snowflake Config
 # ==========================
+NASA_URL = "https://data.gesdisc.earthdata.nasa.gov/data/GLDAS/GLDAS_NOAH025_M.2.1/2000/GLDAS_NOAH025_M.A200001.021.nc4"
+
+# 🔑 Token من Earthdata (خليه في متغير)
+EARTHDATA_TOKEN = "eyJ0eXAiOiJKV1QiLCJvcmlnaW4iOiJFYXJ0aGRhdGEgTG9naW4iLCJzaWciOiJlZGxqd3RwdWJrZXlfb3BzIiwiYWxnIjoiUlMyNTYifQ.eyJ0eXBlIjoiVXNlciIsInVpZCI6ImE3bWVkX2Vzc28iLCJleHAiOjE3NjQzNzQzOTksImlhdCI6MTc1OTE1NjcwNSwiaXNzIjoiaHR0cHM6Ly91cnMuZWFydGhkYXRhLm5hc2EuZ292IiwiaWRlbnRpdHlfcHJvdmlkZXIiOiJlZGxfb3BzIiwiYWNyIjoiZWRsIiwiYXNzdXJhbmNlX2xldmVsIjozfQ.37ornZlS0nY1ri4VPKlCpKs763OHwQi0iCFmZ_wp80i_jm_g4OoBMBO8PuzEn6bth9MiUDDO0N3VTClWwJyzr9-ohRCAhnwllaCM0PLJVr7OKQ8nZF7MjjvFXJu4CUh5IPs9ojxGrroY27o-pWRQK7LCv7gstr6xF3szQt3wL0YBrki4EABFxNzm2KetIlkyplYBpGp2HIpfofAZcTFECNIC11qE6L8KwhlTDSi4-OTRGXSOTe3Wd6Ol6QsO6RmyU9iUIbuhb-mBqSVXRxd8s8HFlKqcLHBtT4j1f4qG5P7lpB1wEYTYyAZjI3bppLkYEP6ybYj4Kaoe6moCYqMwAg"
+
+# Snowflake Config
 SNOWFLAKE_ACCOUNT = "KBZQPZO-WX06551"
 SNOWFLAKE_USER = "A7MEDESSO"
 SNOWFLAKE_AUTHENTICATOR = "externalbrowser"
@@ -17,96 +22,65 @@ SNOWFLAKE_WAREHOUSE = "NASA_WH"
 SNOWFLAKE_DATABASE = "NASA_DB"
 SNOWFLAKE_SCHEMA = "PUBLIC"
 
-# ✅ المتغير اللي هنركز عليه (درجة الحرارة عند 2 متر)
-VARIABLE = "T2M"
-
 
 # ==========================
 # DAGSTER OPS
 # ==========================
 @op
-def extract_temperature() -> pd.DataFrame:
-    all_data = []
+def extract_temperature():
+    """يسحب ملف NetCDF من NASA Earthdata باستخدام Bearer Token"""
+    headers = {"Authorization": f"Bearer {EARTHDATA_TOKEN}"}
+    response = requests.get(NASA_URL, headers=headers)
+    response.raise_for_status()
 
-    # ✅ Login to NASA Earthdata using environment variables
-    auth = earthaccess.login(strategy="environment")
+    data = io.BytesIO(response.content)
+    ds = xr.open_dataset(data, engine="h5netcdf")
 
-    # Search NASA dataset
-    results = earthaccess.search_data(
-        short_name="M2T1NXSLV",
-        version="5.12.4",
-        temporal=("2022-01-01", "2023-01-01"),
-        bounding_box=(24.70, 22.00, 37.35, 31.67)  # إحداثيات مصر
-    )
-
-    print(f"Found {len(results)} files.")
-
-    files = earthaccess.download(results, "./data")
-
-    for file in files:
-        ds = xr.open_dataset(file, engine="h5netcdf")
-
-        if VARIABLE in ds.variables:
-            df = ds[VARIABLE].to_dataframe().reset_index()
-            df["variable"] = VARIABLE
-            df["timestamp"] = pd.to_datetime(ds.time.values[0])
-            all_data.append(df)
-
-    if not all_data:
-        raise ValueError("No temperature data found. Check search parameters!")
-
-    combined_df = pd.concat(all_data, ignore_index=True)
-    return combined_df
+    # ناخد متغير الحرارة لأول يوم
+    temp = ds["Tair_f_inst"].isel(time=0)
+    df = temp.to_dataframe().reset_index()
+    return df
 
 
 @op
-def transform_temperature(df: pd.DataFrame) -> pd.DataFrame:
-    transformed = (
-        df.groupby([df["timestamp"].dt.month])
-        .mean(numeric_only=True)
-        .reset_index()
-    )
-    transformed.rename(columns={"timestamp": "month"}, inplace=True)
-    transformed["month"] = transformed["month"].astype(int)
-    transformed["avg_temp"] = transformed.iloc[:, 1]
-    return transformed[["month", "avg_temp"]]
+def transform_temperature(df: pd.DataFrame):
+    """تحويل بيانات الحرارة"""
+    avg_temp = df["Tair_f_inst"].mean()
+    transformed = pd.DataFrame({"avg_temperature": [avg_temp]})
+    return transformed
 
 
 @op
 def load_temperature_to_snowflake(df: pd.DataFrame):
-    try:
-        conn = snowflake.connector.connect(
-            account=SNOWFLAKE_ACCOUNT,
-            user=SNOWFLAKE_USER,
-            authenticator=SNOWFLAKE_AUTHENTICATOR,
-            warehouse=SNOWFLAKE_WAREHOUSE,
-            database=SNOWFLAKE_DATABASE,
-            schema=SNOWFLAKE_SCHEMA,
-            role=SNOWFLAKE_ROLE
+    """تحميل البيانات لـ Snowflake"""
+    conn = snowflake.connector.connect(
+    account="KBZQPZO-WX06551",
+    user="A7MEDESSO",
+    password="Ahmedesso@2005",   # ✨ تحط الباسورد هنا
+    authenticator="snowflake",
+    warehouse="NASA_WH",
+    database="NASA_DB",
+    schema="PUBLIC",
+    role="ACCOUNTADMIN"
+)
+
+    cur = conn.cursor()
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS TEMPERATURE (
+            avg_temperature FLOAT
+        )
+    """)
+
+    for _, row in df.iterrows():
+        cur.execute(
+            "INSERT INTO TEMPERATURE (avg_temperature) VALUES (%s)",
+            (row["avg_temperature"],),
         )
 
-        cur = conn.cursor()
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS NASA_TEMPERATURE (
-                month INT,
-                avg_temp FLOAT
-            )
-        """)
-
-        for _, row in df.iterrows():
-            cur.execute(
-                "INSERT INTO NASA_TEMPERATURE (month, avg_temp) VALUES (%s, %s)",
-                (int(row["month"]), float(row["avg_temp"]))
-            )
-
-        conn.commit()
-        print("✅ Temperature data loaded successfully into Snowflake.")
-
-    except Exception as e:
-        print(f"Error loading to Snowflake: {e}")
-    finally:
-        cur.close()
-        conn.close()
+    conn.commit()
+    cur.close()
+    conn.close()
 
 
 # ==========================
