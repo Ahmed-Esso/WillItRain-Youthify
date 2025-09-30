@@ -20,11 +20,12 @@ SNOWFLAKE_SCHEMA = "PUBLIC"
 # ✅ المتغير اللي هنركز عليه (درجة الحرارة عند 2 متر)
 VARIABLE = "T2M"
 
+
 # ==========================
-# SINGLE DAGSTER OP
+# DAGSTER OPS
 # ==========================
 @op
-def etl_temperature_only():
+def extract_temperature() -> pd.DataFrame:
     all_data = []
 
     # ✅ Login to NASA Earthdata using environment variables
@@ -35,7 +36,7 @@ def etl_temperature_only():
         short_name="M2T1NXSLV",
         version="5.12.4",
         temporal=("2022-01-01", "2023-01-01"),
-        bounding_box=(24.70, 22.00, 37.35, 31.67)  # القاهرة
+        bounding_box=(24.70, 22.00, 37.35, 31.67)  # إحداثيات مصر
     )
 
     print(f"Found {len(results)} files.")
@@ -54,19 +55,25 @@ def etl_temperature_only():
     if not all_data:
         raise ValueError("No temperature data found. Check search parameters!")
 
-    # ========= Transform =========
     combined_df = pd.concat(all_data, ignore_index=True)
+    return combined_df
+
+
+@op
+def transform_temperature(df: pd.DataFrame) -> pd.DataFrame:
     transformed = (
-        combined_df.groupby([combined_df["timestamp"].dt.month])
+        df.groupby([df["timestamp"].dt.month])
         .mean(numeric_only=True)
         .reset_index()
     )
     transformed.rename(columns={"timestamp": "month"}, inplace=True)
     transformed["month"] = transformed["month"].astype(int)
     transformed["avg_temp"] = transformed.iloc[:, 1]
-    final_df = transformed[["month", "avg_temp"]]
+    return transformed[["month", "avg_temp"]]
 
-    # ========= Load to Snowflake =========
+
+@op
+def load_temperature_to_snowflake(df: pd.DataFrame):
     try:
         conn = snowflake.connector.connect(
             account=SNOWFLAKE_ACCOUNT,
@@ -86,7 +93,7 @@ def etl_temperature_only():
             )
         """)
 
-        for _, row in final_df.iterrows():
+        for _, row in df.iterrows():
             cur.execute(
                 "INSERT INTO NASA_TEMPERATURE (month, avg_temp) VALUES (%s, %s)",
                 (int(row["month"]), float(row["avg_temp"]))
@@ -107,4 +114,6 @@ def etl_temperature_only():
 # ==========================
 @job
 def nasa_temperature_pipeline():
-    etl_temperature_only()
+    data = extract_temperature()
+    transformed = transform_temperature(data)
+    load_temperature_to_snowflake(transformed)
