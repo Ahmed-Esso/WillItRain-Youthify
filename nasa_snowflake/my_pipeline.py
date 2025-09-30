@@ -4,6 +4,7 @@ import pandas as pd
 import snowflake.connector
 from dagster import job, op
 import earthaccess
+import os
 
 # ==========================
 # Snowflake Config
@@ -25,8 +26,8 @@ VARIABLES = ["T2M", "QV2M", "T2MDEW", "U10M", "V10M", "PS", "TQV", "SLP", "T2MWE
 def extract_variables() -> pd.DataFrame:
     all_data = []
 
-    # Login to NASA Earthdata
-    auth = earthaccess.login(strategy="netrc")  # أو "interactive"
+    # ✅ Login to NASA Earthdata using environment variables
+    auth = earthaccess.login(strategy="environment")
 
     # Search NASA dataset
     results = earthaccess.search_data(
