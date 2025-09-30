@@ -37,16 +37,18 @@ def extract_variables():
 
     print(f"Found {len(results)} files.")
 
-    # ✅ Open datasets directly (no local save)
-    datasets = earthaccess.open(results)
+    # ✅ Open datasets as HTTPFile objects
+    files = earthaccess.open(results)
 
-    for ds in datasets:
-        for var in VARIABLES:
-            if var in ds.variables:
-                df = ds[var].to_dataframe().reset_index()
-                df["variable"] = var
-                df["timestamp"] = pd.to_datetime(ds.time.values[0])
-                all_data.append(df)
+    for f in files:
+        # نفتح الـ HTTPFile بـ xarray
+        with xr.open_dataset(f, engine="h5netcdf") as ds:
+            for var in VARIABLES:
+                if var in ds.variables:
+                    df = ds[var].to_dataframe().reset_index()
+                    df["variable"] = var
+                    df["timestamp"] = pd.to_datetime(ds.time.values[0])
+                    all_data.append(df)
 
     if not all_data:
         raise ValueError("No data found. Check search parameters!")
