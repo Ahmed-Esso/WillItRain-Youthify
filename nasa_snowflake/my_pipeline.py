@@ -52,7 +52,7 @@ def search_nasa_files(context):
     results = earthaccess.search_data(
         short_name="M2T1NXSLV",
         version="5.12.4",
-        temporal=("2022-01-01", "2022-01-31"),  # شهر يناير كمثال
+        temporal=("2022-01-01", "2023-01-01"),  # شهر يناير كمثال
         bounding_box=(24.70, 22.00, 37.35, 31.67)  # منطقة القاهرة
     )
     
@@ -271,3 +271,4 @@ if __name__ == "__main__":
     
     result = execute_pipeline(nasa_daily_temperature_pipeline)
     print(f"✅ Pipeline finished: {result.success}")
+
