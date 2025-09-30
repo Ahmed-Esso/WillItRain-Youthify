@@ -85,14 +85,11 @@ def load_to_snowflake(dfs):
     cur.close()
     conn.close()
 
-from dagster import job
-
-# باقي الـ ops (extract_variables, load_to_snowflake, الخ)
-
 @job
 def nasa_variables_pipeline():
     dfs = extract_variables()
     load_to_snowflake(dfs)
+
 
 
 
