@@ -6,6 +6,7 @@ from dagster import job, op, DynamicOut, DynamicOutput
 import earthaccess
 from datetime import datetime, timedelta
 import math
+import numpy as np
 
 # ==========================
 # Snowflake Config
@@ -177,6 +178,40 @@ def process_single_wind_file(context, granule) -> pd.DataFrame:
 
 
 @op
+def clean_wind_dataframe(context, df: pd.DataFrame) -> pd.DataFrame:
+    """
+    تنظيف بيانات الرياح والضغط وإزالة القيم NaN
+    """
+    if df.empty:
+        return df
+    
+    context.log.info(f"🧹 Cleaning {len(df)} wind records...")
+    
+    # نسخة من البيانات للتنظيف
+    cleaned_df = df.copy()
+    
+    # إزالة الصفوف التي تحتوي على NaN في الأعمدة الأساسية
+    initial_count = len(cleaned_df)
+    cleaned_df = cleaned_df.dropna(subset=['date', 'variable', 'lat', 'lon'])
+    
+    # استبدال NaN في الأعمدة الرقمية بصفر
+    numeric_columns = cleaned_df.select_dtypes(include=['number']).columns
+    for col in numeric_columns:
+        nan_count = cleaned_df[col].isna().sum()
+        if nan_count > 0:
+            context.log.info(f"🔧 Replacing {nan_count} NaN values in {col} with 0")
+            cleaned_df[col] = cleaned_df[col].fillna(0)
+    
+    removed_count = initial_count - len(cleaned_df)
+    if removed_count > 0:
+        context.log.info(f"🗑️ Removed {removed_count} wind records with missing essential data")
+    
+    context.log.info(f"✅ Cleaned {len(cleaned_df)} wind records")
+    
+    return cleaned_df
+
+
+@op
 def transform_wind_data(context, df: pd.DataFrame) -> pd.DataFrame:
     """
     تحويل بيانات الرياح والضغط اليومية للتخزين في Snowflake
@@ -225,20 +260,66 @@ def transform_wind_data(context, df: pd.DataFrame) -> pd.DataFrame:
 
 
 @op
+def validate_wind_data_before_load(context, df: pd.DataFrame) -> pd.DataFrame:
+    """
+    فحص بيانات الرياح والضغط قبل التحميل لاكتشاف المشاكل مبكراً
+    """
+    if df.empty:
+        context.log.warning("⚠️ Empty wind dataframe in validation")
+        return df
+    
+    context.log.info(f"🔍 Validating {len(df)} wind records before load...")
+    
+    # فحص القيم NaN
+    nan_check = df.isna().sum()
+    total_nan = nan_check.sum()
+    
+    if total_nan > 0:
+        context.log.warning(f"⚠️ Found {total_nan} NaN values in wind dataframe:")
+        for column, count in nan_check.items():
+            if count > 0:
+                context.log.warning(f"   - {column}: {count} NaN values")
+    
+    # فحص القيم في avg_value
+    if "avg_value" in df.columns:
+        avg_value_stats = df["avg_value"].describe()
+        context.log.info(f"📊 avg_value statistics: count={avg_value_stats['count']}, mean={avg_value_stats['mean']:.2f}")
+        
+        # اكتشاف القيم غير الطبيعية
+        infinite_values = np.isinf(df["avg_value"]).sum()
+        if infinite_values > 0:
+            context.log.warning(f"⚠️ Found {infinite_values} infinite values in avg_value")
+    
+    # إزالة الصفوف التي تحتوي على NaN في أعمدة أساسية
+    initial_count = len(df)
+    essential_columns = ['date', 'variable', 'avg_value']
+    cleaned_df = df.dropna(subset=essential_columns)
+    removed_count = initial_count - len(cleaned_df)
+    
+    if removed_count > 0:
+        context.log.warning(f"🗑️ Removed {removed_count} wind records with missing essential data")
+    
+    context.log.info(f"✅ Wind validation complete. {len(cleaned_df)} valid records remaining")
+    
+    return cleaned_df
+
+
+@op
 def load_wind_to_snowflake(context, df: pd.DataFrame):
     """
     تحميل بيانات الرياح والضغط اليومية لـ Snowflake
     """
     if df.empty:
         context.log.warning("⚠️ Empty wind dataframe - skipping load")
-        return "skipped"
-    
-    context.log.info(f"📤 Loading {len(df)} daily wind records to Snowflake...")
+        return {"status": "skipped", "loaded_count": 0, "file_info": "empty"}
+
+    context.log.info(f"📤 Preparing to load {len(df)} daily wind records to Snowflake...")
     
     try:
         conn = get_snowflake_connection()
         cur = conn.cursor()
         
+        # إنشاء الجدول إذا لم يكن موجوداً
         cur.execute("""
             CREATE TABLE IF NOT EXISTS NASA_DAILY_WIND_PRESSURE (
                 date DATE,
@@ -258,32 +339,83 @@ def load_wind_to_snowflake(context, df: pd.DataFrame):
             VALUES (%s, %s, %s, %s, %s, %s, %s)
         """
         
-        data_to_insert = [
-            (
-                row["date"], 
-                int(row["year"]), 
-                int(row["month"]), 
-                int(row["day"]), 
-                row["variable"], 
-                float(row["avg_value"]), 
-                int(row["measurement_count"])
-            )
-            for _, row in df.iterrows()
-        ]
+        # تحضير البيانات مع معالجة NaN
+        successful_inserts = 0
+        failed_inserts = 0
+        error_messages = []
         
-        cur.executemany(insert_query, data_to_insert)
+        for index, row in df.iterrows():
+            try:
+                # معالجة القيم NaN
+                avg_value = row["avg_value"]
+                if pd.isna(avg_value) or pd.isnull(avg_value):
+                    context.log.warning(f"⚠️ Found NaN value in row {index}, skipping this row")
+                    failed_inserts += 1
+                    continue
+                
+                measurement_count = row["measurement_count"]
+                if pd.isna(measurement_count) or pd.isnull(measurement_count):
+                    measurement_count = 0
+                
+                # التحقق من البيانات الأساسية
+                if pd.isna(row["date"]) or pd.isna(row["variable"]):
+                    context.log.warning(f"⚠️ Missing essential data in row {index}, skipping")
+                    failed_inserts += 1
+                    continue
+                
+                # إدخال الصف
+                cur.execute(insert_query, (
+                    row["date"], 
+                    int(row["year"]), 
+                    int(row["month"]), 
+                    int(row["day"]), 
+                    row["variable"], 
+                    float(avg_value),
+                    int(measurement_count)
+                ))
+                successful_inserts += 1
+                
+            except Exception as row_error:
+                failed_inserts += 1
+                error_msg = f"Error in row {index}: {str(row_error)}"
+                error_messages.append(error_msg)
+                context.log.warning(f"⚠️ {error_msg}")
+                continue  # استمرار مع الصفوف التالية
+        
         conn.commit()
         
-        context.log.info(f"✅ Successfully loaded {len(df)} daily wind records")
+        # تسجيل النتائج
+        if successful_inserts > 0:
+            context.log.info(f"✅ Successfully loaded {successful_inserts} daily wind records")
+        
+        if failed_inserts > 0:
+            context.log.warning(f"⚠️ Failed to load {failed_inserts} wind records due to errors")
+        
+        if error_messages:
+            context.log.info("📋 Wind error summary:")
+            for msg in error_messages[:5]:  # اطبع أول 5 أخطاء فقط
+                context.log.info(f"   - {msg}")
+            if len(error_messages) > 5:
+                context.log.info(f"   ... and {len(error_messages) - 5} more errors")
         
         cur.close()
         conn.close()
         
-        return "success"
+        return {
+            "status": "partial_success" if failed_inserts > 0 else "success",
+            "loaded_count": successful_inserts,
+            "failed_count": failed_inserts,
+            "total_records": len(df)
+        }
         
     except Exception as e:
-        context.log.error(f"❌ Error loading wind data to Snowflake: {e}")
-        raise
+        context.log.error(f"❌ Critical error loading wind data to Snowflake: {e}")
+        return {
+            "status": "failed",
+            "loaded_count": 0,
+            "failed_count": len(df),
+            "error": str(e)
+        }
 
 
 @job
@@ -293,8 +425,10 @@ def nasa_daily_wind_pipeline():
     """
     files = search_nasa_wind_files()
     processed = files.map(process_single_wind_file)
-    transformed = processed.map(transform_wind_data)
-    transformed.map(load_wind_to_snowflake)
+    cleaned = processed.map(clean_wind_dataframe)
+    transformed = cleaned.map(transform_wind_data)
+    validated = transformed.map(validate_wind_data_before_load)
+    validated.map(load_wind_to_snowflake)
 
 
 if __name__ == "__main__":
