@@ -30,7 +30,7 @@ def get_month_range(year):
 
 @op(out=Out(pd.DataFrame))
 def extract_variables(context, year: int = 2023):
-    context.log.info(f"Logging in to NASA Earthdata...")
+    context.log.info("Logging in to NASA Earthdata...")
     earthaccess.login(strategy="netrc")
 
     dfs = []
@@ -38,9 +38,9 @@ def extract_variables(context, year: int = 2023):
         context.log.info(f"Processing {start.strftime('%Y-%m')} ...")
 
         results = earthaccess.search_data(
-            short_name="M2I1NXASM",  
+            short_name="M2I1NXASM",
             temporal=(start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d")),
-            bounding_box=[-180, -90, 180, 90],  
+            bounding_box=(-180, -90, 180, 90),
         )
 
         if not results:
@@ -50,6 +50,7 @@ def extract_variables(context, year: int = 2023):
         files = earthaccess.open(results)
 
         for f in files:
+            # افتح الـ dataset مباشرة من ال object (مش من local path)
             ds = xr.open_dataset(f, engine="netcdf4")
             df = ds[VARIABLES].to_dataframe().reset_index()
             dfs.append(df)
@@ -121,3 +122,4 @@ def nasa_variables_pipeline():
     df = extract_variables()
     transformed = transform_variables(df)
     load_variables_to_snowflake(transformed)
+
