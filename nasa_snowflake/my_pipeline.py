@@ -1,92 +1,121 @@
-# nasa_snowflake/my_pipeline.py
-
-import os
-import pandas as pd
 import xarray as xr
+import pandas as pd
+import snowflake.connector
+from dagster import job, op, Out, Output
 import earthaccess
-from dagster import op, job, Out, Output
+
+# ==========================
+# Snowflake Config
+# ==========================
+SNOWFLAKE_ACCOUNT = "KBZQPZO-WX06551"
+SNOWFLAKE_USER = "A7MEDESSO"
+SNOWFLAKE_AUTHENTICATOR = "externalbrowser"
+SNOWFLAKE_ROLE = "ACCOUNTADMIN"
+SNOWFLAKE_WAREHOUSE = "NASA_WH"
+SNOWFLAKE_DATABASE = "NASA_DB"
+SNOWFLAKE_SCHEMA = "PUBLIC"
 
 VARIABLES = ["T2M", "QV2M", "T2MDEW", "U10M", "V10M", "PS", "TQV", "SLP", "T2MWET"]
 
-SNOWFLAKE_USER = os.getenv("SNOWFLAKE_USER")
-SNOWFLAKE_PASSWORD = os.getenv("SNOWFLAKE_PASSWORD")
-SNOWFLAKE_ACCOUNT = os.getenv("SNOWFLAKE_ACCOUNT")
-SNOWFLAKE_DATABASE = os.getenv("SNOWFLAKE_DATABASE")
-SNOWFLAKE_SCHEMA = os.getenv("SNOWFLAKE_SCHEMA")
-SNOWFLAKE_WAREHOUSE = os.getenv("SNOWFLAKE_WAREHOUSE")
-
-# ---- Step 1: Extract ----
+# ==========================
+# DAGSTER OPS
+# ==========================
 @op(out=Out(pd.DataFrame))
 def extract_variables():
+    all_data = []
+
+    # ✅ Login to NASA Earthdata using env vars
+    earthaccess.login(strategy="environment")
+
+    # Search dataset
     results = earthaccess.search_data(
         short_name="M2T1NXSLV",
-        temporal=("2020-01-01", "2020-01-31"),
-        bounding_box=(-10, 20, 10, 30)
+        version="5.12.4",
+        temporal=("2022-01-01", "2023-01-01"),
+        bounding_box=(24.70, 22.00, 37.35, 31.67)  # القاهرة
     )
 
-    datasets = []
-    for granule in results:
-        with earthaccess.open(granule) as f:
-            ds = xr.open_dataset(f)
-            df = ds[VARIABLES].to_dataframe().reset_index()
-            datasets.append(df)
+    print(f"Found {len(results)} files.")
 
-    if not datasets:
-        raise ValueError("No data returned from NASA search")
+    # ✅ Open datasets directly (no local save)
+    datasets = earthaccess.open(results)
 
-    final_df = pd.concat(datasets, ignore_index=True)
+    for ds in datasets:
+        for var in VARIABLES:
+            if var in ds.variables:
+                df = ds[var].to_dataframe().reset_index()
+                df["variable"] = var
+                df["timestamp"] = pd.to_datetime(ds.time.values[0])
+                all_data.append(df)
 
-    # أهم نقطة: لازم نـرجع Output
-    yield Output(final_df, "result")
+    if not all_data:
+        raise ValueError("No data found. Check search parameters!")
+
+    combined_df = pd.concat(all_data, ignore_index=True)
+
+    return Output(combined_df, "result")
 
 
-# ---- Step 2: Load to Snowflake ----
+@op(out=Out(pd.DataFrame))
+def transform_variables(df: pd.DataFrame):
+    transformed = (
+        df.groupby(["variable", df["timestamp"].dt.month])
+        .mean(numeric_only=True)
+        .reset_index()
+    )
+    transformed.rename(columns={"timestamp": "month"}, inplace=True)
+    transformed["month"] = transformed["month"].astype(int)
+    transformed["avg_value"] = transformed.iloc[:, 2]
+    final = transformed[["variable", "month", "avg_value"]]
+
+    return Output(final, "result")
+
+
 @op
-def load_to_snowflake(df: pd.DataFrame):
-    import snowflake.connector
-
-    conn = snowflake.connector.connect(
-        user=SNOWFLAKE_USER,
-        password=SNOWFLAKE_PASSWORD,
-        account=SNOWFLAKE_ACCOUNT,
-        warehouse=SNOWFLAKE_WAREHOUSE,
-        database=SNOWFLAKE_DATABASE,
-        schema=SNOWFLAKE_SCHEMA,
-    )
-    cur = conn.cursor()
-
-    cur.execute(f"""
-        CREATE TABLE IF NOT EXISTS nasa_weather_data (
-            time TIMESTAMP,
-            lat FLOAT,
-            lon FLOAT,
-            {", ".join([f"{var} FLOAT" for var in VARIABLES])}
+def load_variables_to_snowflake(df: pd.DataFrame):
+    conn = None
+    cur = None
+    try:
+        conn = snowflake.connector.connect(
+            account=SNOWFLAKE_ACCOUNT,
+            user=SNOWFLAKE_USER,
+            authenticator=SNOWFLAKE_AUTHENTICATOR,
+            warehouse=SNOWFLAKE_WAREHOUSE,
+            database=SNOWFLAKE_DATABASE,
+            schema=SNOWFLAKE_SCHEMA,
+            role=SNOWFLAKE_ROLE
         )
-    """)
 
-    # هنا ممكن نعمل batch insert عشان السرعة
-    rows = [
-        (
-            row["time"], row["lat"], row["lon"],
-            *[row[var] for var in VARIABLES]
-        )
-        for _, row in df.iterrows()
-    ]
+        cur = conn.cursor()
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS NASA_VARIABLES (
+                variable STRING,
+                month INT,
+                avg_value FLOAT
+            )
+        """)
 
-    insert_sql = f"""
-        INSERT INTO nasa_weather_data (time, lat, lon, {", ".join(VARIABLES)})
-        VALUES ({",".join(["%s"] * (3 + len(VARIABLES)))})
-    """
+        rows = df.to_records(index=False).tolist()
+        insert_sql = "INSERT INTO NASA_VARIABLES (variable, month, avg_value) VALUES (%s, %s, %s)"
+        cur.executemany(insert_sql, rows)
 
-    cur.executemany(insert_sql, rows)
+        conn.commit()
+        print(f"Inserted {len(rows)} rows into NASA_VARIABLES ✅")
 
-    conn.commit()
-    cur.close()
-    conn.close()
+    except Exception as e:
+        print(f"❌ Error loading to Snowflake: {e}")
+    finally:
+        if cur:
+            cur.close()
+        if conn:
+            conn.close()
 
 
-# ---- Step 3: Define Pipeline ----
+# ==========================
+# DAGSTER JOB
+# ==========================
 @job
 def nasa_variables_pipeline():
-    df = extract_variables()
-    load_to_snowflake(df)
+    data = extract_variables()
+    transformed = transform_variables(data)
+    load_variables_to_snowflake(transformed)
