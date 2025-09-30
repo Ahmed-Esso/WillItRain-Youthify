@@ -41,102 +41,89 @@ def get_snowflake_connection():
 # ==========================
 
 @op(out=DynamicOut())
-def search_nasa_files(context):
+def search_nasa_weather_files(context):
     """
-    بحث عن ملفات NASA للفترة المطلوبة
+    بحث عن ملفات NASA للفترة المطلوبة للرطوبة ودرجة الحرارة
     """
     context.log.info("🔍 Logging into NASA Earthdata...")
     auth = earthaccess.login(strategy="environment")
     
-    context.log.info("🔍 Searching for NASA files...")
+    context.log.info("🔍 Searching for NASA weather files...")
     results = earthaccess.search_data(
         short_name="M2T1NXSLV",
         version="5.12.4",
-        temporal=("2022-01-01", "2023-01-01"),  # شهر يناير كمثال
+        temporal=("2022-01-01", "2023-01-01"),
         bounding_box=(24.70, 22.00, 37.35, 31.67)  # منطقة القاهرة
     )
     
-    context.log.info(f"✅ Found {len(results)} files")
+    context.log.info(f"✅ Found {len(results)} weather files")
     
-    # نرجع كل file كـ dynamic output منفصل
     for idx, granule in enumerate(results):
         yield DynamicOutput(
             value=granule,
-            mapping_key=f"file_{idx}"
+            mapping_key=f"weather_file_{idx}"
         )
 
 
 @op
-def process_single_file(context, granule) -> pd.DataFrame:
+def process_single_weather_file(context, granule) -> pd.DataFrame:
     """
-    معالجة ملف واحد وحساب المتوسط اليومي للمتغيرات الثلاثة
+    معالجة ملف واحد وحساب المتوسط اليومي للرطوبة ودرجة الحرارة
     """
     try:
-        context.log.info(f"📥 Streaming file: {granule['meta']['native-id']}")
+        context.log.info(f"📥 Streaming weather file: {granule['meta']['native-id']}")
         
-        # فتح الملف مباشرة من الإنترنت
         file_stream = earthaccess.open([granule])[0]
-        
-        # فتح الـ dataset
         ds = xr.open_dataset(file_stream, engine="h5netcdf")
         
         all_daily_data = []
         
-        # معالجة كل variable
         for var in VARIABLES:
             if var in ds.variables:
-                context.log.info(f"📊 Processing variable: {var}")
+                context.log.info(f"📊 Processing weather variable: {var}")
                 
-                # نحول البيانات لـ DataFrame مع الاحتفاظ بالوقت
                 df = ds[[var]].to_dataframe().reset_index()
                 
-                # نتأكد من وجود عمود الوقت
                 if "time" not in df.columns:
                     context.log.warning("⚠️ No time column found")
                     continue
                 
-                # نحول الوقت لـ datetime
                 df["time"] = pd.to_datetime(df["time"])
+                df["date"] = df["time"].dt.date
                 
-                # نجمع البيانات بالساعة ونحسب المتوسط اليومي
-                df["date"] = df["time"].dt.date  # نأخذ التاريخ فقط (بدون وقت)
-                
-                # نحسب المتوسط اليومي لكل موقع
                 daily_avg = df.groupby(["date", "lat", "lon"])[var].mean().reset_index()
                 daily_avg["variable"] = var
                 
                 all_daily_data.append(daily_avg)
             else:
-                context.log.warning(f"⚠️ Variable {var} not found in dataset")
+                context.log.warning(f"⚠️ Weather variable {var} not found in dataset")
         
         ds.close()
         
         if not all_daily_data:
-            context.log.warning(f"⚠️ No variables found in file")
+            context.log.warning(f"⚠️ No weather variables found in file")
             return pd.DataFrame()
         
-        # نجمع كل البيانات اليومية
         combined = pd.concat(all_daily_data, ignore_index=True)
-        context.log.info(f"✅ Processed {len(combined)} daily records from file")
+        context.log.info(f"✅ Processed {len(combined)} daily weather records from file")
         
         return combined
         
     except Exception as e:
-        context.log.error(f"❌ Error processing file: {e}")
+        context.log.error(f"❌ Error processing weather file: {e}")
         return pd.DataFrame()
 
 
 @op
-def transform_daily_data(context, df: pd.DataFrame) -> pd.DataFrame:
+def transform_weather_data(context, df: pd.DataFrame) -> pd.DataFrame:
     """
-    تحويل البيانات اليومية للتخزين في Snowflake
+    تحويل بيانات الرطوبة ودرجة الحرارة اليومية للتخزين في Snowflake
     """
     if df.empty:
         return df
     
-    context.log.info(f"🔄 Transforming {len(df)} daily records...")
+    context.log.info(f"🔄 Transforming {len(df)} daily weather records...")
     
-    # نتأكد من وجود الأعمدة المطلوبة
     required_cols = ["date", "variable", "lat", "lon"]
     missing_cols = [col for col in required_cols if col not in df.columns]
     
@@ -144,56 +131,54 @@ def transform_daily_data(context, df: pd.DataFrame) -> pd.DataFrame:
         context.log.warning(f"⚠️ Missing columns: {missing_cols}")
         return pd.DataFrame()
     
-    # نحسب المتوسط اليومي الشامل (لجميع المواقع)
+    # نحدد اسم عمود القيمة بناءً على المتغير
+    value_column = [col for col in df.columns if col not in ['date', 'variable', 'lat', 'lon', 'time']][0]
+    
     daily_summary = (
         df.groupby(["date", "variable"])
         .agg({
-            list(df.columns)[3]: 'mean',  # أول عمود بيانات
-            'lat': 'count'  # عدد القياسات
+            value_column: 'mean',
+            'lat': 'count'
         })
         .reset_index()
     )
     
-    # نعيد تسمية الأعمدة
     daily_summary.rename(columns={
-        list(df.columns)[3]: 'avg_value',
+        value_column: 'avg_value',
         'lat': 'measurement_count'
     }, inplace=True)
     
-    # نضيف معلومات إضافية
     daily_summary["year"] = pd.to_datetime(daily_summary["date"]).dt.year
     daily_summary["month"] = pd.to_datetime(daily_summary["date"]).dt.month
     daily_summary["day"] = pd.to_datetime(daily_summary["date"]).dt.day
     
-    # نرتب الأعمدة
     result = daily_summary[[
         "date", "year", "month", "day", "variable", 
         "avg_value", "measurement_count"
     ]]
     
-    context.log.info(f"✅ Transformed to {len(result)} daily summary records")
+    context.log.info(f"✅ Transformed to {len(result)} daily weather summary records")
     
     return result
 
 
 @op
-def load_daily_to_snowflake(context, df: pd.DataFrame):
+def load_weather_to_snowflake(context, df: pd.DataFrame):
     """
-    تحميل البيانات اليومية لـ Snowflake
+    تحميل بيانات الرطوبة ودرجة الحرارة اليومية لـ Snowflake
     """
     if df.empty:
-        context.log.warning("⚠️ Empty dataframe - skipping load")
+        context.log.warning("⚠️ Empty weather dataframe - skipping load")
         return "skipped"
     
-    context.log.info(f"📤 Loading {len(df)} daily records to Snowflake...")
+    context.log.info(f"📤 Loading {len(df)} daily weather records to Snowflake...")
     
     try:
         conn = get_snowflake_connection()
         cur = conn.cursor()
         
-        # ننشئ الجدول لو غير موجود
         cur.execute("""
-            CREATE TABLE IF NOT EXISTS NASA_DAILY_WEATHER (
+            CREATE TABLE IF NOT EXISTS NASA_DAILY_HUMIDITY_TEMPERATURE (
                 date DATE,
                 year INT,
                 month INT,
@@ -205,14 +190,12 @@ def load_daily_to_snowflake(context, df: pd.DataFrame):
             )
         """)
         
-        # batch insert للبيانات اليومية
         insert_query = """
-            INSERT INTO NASA_DAILY_WEATHER 
+            INSERT INTO NASA_DAILY_HUMIDITY_TEMPERATURE 
             (date, year, month, day, variable, avg_value, measurement_count) 
             VALUES (%s, %s, %s, %s, %s, %s, %s)
         """
         
-        # نحضر البيانات للإدخال
         data_to_insert = [
             (
                 row["date"], 
@@ -226,11 +209,10 @@ def load_daily_to_snowflake(context, df: pd.DataFrame):
             for _, row in df.iterrows()
         ]
         
-        # إدخال جماعي
         cur.executemany(insert_query, data_to_insert)
         conn.commit()
         
-        context.log.info(f"✅ Successfully loaded {len(df)} daily records")
+        context.log.info(f"✅ Successfully loaded {len(df)} daily weather records")
         
         cur.close()
         conn.close()
@@ -238,38 +220,22 @@ def load_daily_to_snowflake(context, df: pd.DataFrame):
         return "success"
         
     except Exception as e:
-        context.log.error(f"❌ Error loading to Snowflake: {e}")
+        context.log.error(f"❌ Error loading weather data to Snowflake: {e}")
         raise
 
-
-# ==========================
-# DAGSTER JOB - DAILY PIPELINE
-# ==========================
 
 @job
 def nasa_daily_weather_pipeline():
     """
-    Pipeline لمعالجة بيانات الطقس اليومية (الرطوبة، نقطة الندى، الحرارة الرطبة)
+    Pipeline لمعالجة بيانات الرطوبة ودرجة الحرارة اليومية
     """
-    # بحث عن الملفات
-    files = search_nasa_files()
-    
-    # معالجة كل ملف وحساب المتوسطات اليومية
-    processed = files.map(process_single_file)
-    
-    # تحويل البيانات اليومية
-    transformed = processed.map(transform_daily_data)
-    
-    # تحميل البيانات اليومية لـ Snowflake
-    transformed.map(load_daily_to_snowflake)
+    files = search_nasa_weather_files()
+    processed = files.map(process_single_weather_file)
+    transformed = processed.map(transform_weather_data)
+    transformed.map(load_weather_to_snowflake)
 
 
-# ==========================
-# TEST THE PIPELINE
-# ==========================
 if __name__ == "__main__":
-    # تشغيل اختباري
     from dagster import execute_pipeline
-    
     result = execute_pipeline(nasa_daily_weather_pipeline)
     print(f"✅ Weather pipeline finished: {result.success}")
