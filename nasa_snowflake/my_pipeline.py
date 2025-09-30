@@ -8,10 +8,10 @@ from dagster import job, op
 # ==========================
 # NASA + Snowflake Config
 # ==========================
-NASA_URL = "https://data.gesdisc.earthdata.nasa.gov/data/GLDAS/GLDAS_NOAH025_M.2.1/2000/GLDAS_NOAH025_M.A200001.021.nc4"
+BASE_URL = "https://data.gesdisc.earthdata.nasa.gov/data/GLDAS/GLDAS_NOAH025_M.2.1/2022/"
+FILE_TEMPLATE = "GLDAS_NOAH025_M.A{year}{month:02d}.021.nc4"
 
-# 🔑 Token من Earthdata (خليه في متغير)
-EARTHDATA_TOKEN = "eyJ0eXAiOiJKV1QiLCJvcmlnaW4iOiJFYXJ0aGRhdGEgTG9naW4iLCJzaWciOiJlZGxqd3RwdWJrZXlfb3BzIiwiYWxnIjoiUlMyNTYifQ.eyJ0eXBlIjoiVXNlciIsInVpZCI6ImE3bWVkX2Vzc28iLCJleHAiOjE3NjQzNzQzOTksImlhdCI6MTc1OTE1NjcwNSwiaXNzIjoiaHR0cHM6Ly91cnMuZWFydGhkYXRhLm5hc2EuZ292IiwiaWRlbnRpdHlfcHJvdmlkZXIiOiJlZGxfb3BzIiwiYWNyIjoiZWRsIiwiYXNzdXJhbmNlX2xldmVsIjozfQ.37ornZlS0nY1ri4VPKlCpKs763OHwQi0iCFmZ_wp80i_jm_g4OoBMBO8PuzEn6bth9MiUDDO0N3VTClWwJyzr9-ohRCAhnwllaCM0PLJVr7OKQ8nZF7MjjvFXJu4CUh5IPs9ojxGrroY27o-pWRQK7LCv7gstr6xF3szQt3wL0YBrki4EABFxNzm2KetIlkyplYBpGp2HIpfofAZcTFECNIC11qE6L8KwhlTDSi4-OTRGXSOTe3Wd6Ol6QsO6RmyU9iUIbuhb-mBqSVXRxd8s8HFlKqcLHBtT4j1f4qG5P7lpB1wEYTYyAZjI3bppLkYEP6ybYj4Kaoe6moCYqMwAg"
+EARTHDATA_TOKEN = "eyJ0eXAiOiJKV1QiLCJvcmlnaW4iOiJFYXJ0aGRhdGEgTG9naW4iLCJzaWciOiJlZGxqd3RwdWJrZXlfb3BzIiwiYWxnIjoiUlMyNTYifQ.eyJ0eXBlIjoiVXNlciIsInVpZCI6ImE3bWVkX2Vzc28iLCJleHAiOjE3NjQzNzQzOTksImlhdCI6MTc1OTE1NjcwNSwiaXNzIjoiaHR0cHM6Ly91cnMuZWFydGhkYXRhLm5hc2EuZ292IiwiaWRlbnRpdHlfcHJvdmlkZXIiOiJlZGxfb3BzIiwiYWNyIjoiZWRsIiwiYXNzdXJhbmNlX2xldmVsIjozfQ.37ornZlS0nY1ri4VPKlCpKs763OHwQi0iCFmZ_wp80i_jm_g4OoBMBO8PuzEn6bth9MiUDDO0N3VTClWwJyzr9-ohRCAhnwllaCM0PLJVr7OKQ8nZF7MjjvFXJu4CUh5IPs9ojxGrroY27o-pWRQK7LCv7gstr6xF3szQt3wL0YBrki4EABFxNzm2KetIlkyplYBpGp2HIpfofAZcTFECNIC11qE6L8KwhlTDSi4-OTRGXSOTe3Wd6Ol6QsO6RmyU9iUIbuhb-mBqSVXRxd8s8HFlKqcLHBtT4j1f4qG5P7lpB1wEYTYyAZjI3bppLkYEP6ybYj4Kaoe6moCYqMwAg"  # ✨ حطي التوكن بتاعك هنا
 
 # Snowflake Config
 SNOWFLAKE_ACCOUNT = "KBZQPZO-WX06551"
@@ -28,59 +28,71 @@ SNOWFLAKE_SCHEMA = "PUBLIC"
 # ==========================
 @op
 def extract_temperature():
-    """يسحب ملف NetCDF من NASA Earthdata باستخدام Bearer Token"""
+    """يسحب ملفات سنة 2022 كاملة من NASA Earthdata"""
     headers = {"Authorization": f"Bearer {EARTHDATA_TOKEN}"}
-    response = requests.get(NASA_URL, headers=headers)
-    response.raise_for_status()
+    all_months = []
 
-    data = io.BytesIO(response.content)
-    ds = xr.open_dataset(data, engine="h5netcdf")
+    year = 2022
+    for month in range(1, 13):
+        file_name = FILE_TEMPLATE.format(year=year, month=month)
+        url = BASE_URL + file_name
+        print(f"⬇️ Fetching {url}")
 
-    # ناخد متغير الحرارة لأول يوم
-    temp = ds["Tair_f_inst"].isel(time=0)
-    df = temp.to_dataframe().reset_index()
+        response = requests.get(url, headers=headers)
+        response.raise_for_status()
+
+        data = io.BytesIO(response.content)
+        ds = xr.open_dataset(data, engine="h5netcdf")
+
+        # ناخد المتوسط لكل شهر
+        if "Tair_f_inst" in ds.variables:
+            temp = ds["Tair_f_inst"].mean(dim=["lat", "lon", "time"])
+            avg_val = float(temp.values)
+            all_months.append({"year": year, "month": month, "avg_temperature": avg_val})
+
+    df = pd.DataFrame(all_months)
     return df
 
 
 @op
 def transform_temperature(df: pd.DataFrame):
-    """تحويل بيانات الحرارة"""
-    avg_temp = df["Tair_f_inst"].mean()
-    transformed = pd.DataFrame({"avg_temperature": [avg_temp]})
-    return transformed
+    """يرجع الـ DataFrame زي ما هو (ممكن تزود معالجات هنا)"""
+    return df
 
 
 @op
 def load_temperature_to_snowflake(df: pd.DataFrame):
     """تحميل البيانات لـ Snowflake"""
     conn = snowflake.connector.connect(
-    account="KBZQPZO-WX06551",
-    user="A7MEDESSO",
-    password="Ahmedesso@2005",   # ✨ تحط الباسورد هنا
-    authenticator="snowflake",
-    warehouse="NASA_WH",
-    database="NASA_DB",
-    schema="PUBLIC",
-    role="ACCOUNTADMIN"
-)
+        account=SNOWFLAKE_ACCOUNT,
+        user=SNOWFLAKE_USER,
+        authenticator=SNOWFLAKE_AUTHENTICATOR,
+        warehouse=SNOWFLAKE_WAREHOUSE,
+        database=SNOWFLAKE_DATABASE,
+        schema=SNOWFLAKE_SCHEMA,
+        role=SNOWFLAKE_ROLE
+    )
 
     cur = conn.cursor()
 
     cur.execute("""
         CREATE TABLE IF NOT EXISTS TEMPERATURE (
+            year INT,
+            month INT,
             avg_temperature FLOAT
         )
     """)
 
     for _, row in df.iterrows():
         cur.execute(
-            "INSERT INTO TEMPERATURE (avg_temperature) VALUES (%s)",
-            (row["avg_temperature"],),
+            "INSERT INTO TEMPERATURE (year, month, avg_temperature) VALUES (%s, %s, %s)",
+            (int(row["year"]), int(row["month"]), float(row["avg_temperature"])),
         )
 
     conn.commit()
     cur.close()
     conn.close()
+    print("✅ Year 2022 monthly averages loaded into Snowflake.")
 
 
 # ==========================
