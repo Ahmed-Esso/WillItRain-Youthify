@@ -86,7 +86,12 @@ def load_temperature_to_snowflake(df: pd.DataFrame):
 
 
 @job
-def nasa_temperature_custom_pipeline():
-    df = extract_temperature()
-    transformed = transform_temperature(df)
+def nasa_temperature_pipeline():
+    year = 2022
+    month = 3
+
+    data = extract_temperature(year, month)
+    transformed = transform_temperature(data)
     load_temperature_to_snowflake(transformed)
+
+
