@@ -86,6 +86,8 @@ def load_to_snowflake(dfs):
 
 
 @dagster.job
-def nasa_to_snowflake():
+def nasa_variables_pipeline():
     dfs = extract_variables()
     load_to_snowflake(dfs)
+
+
