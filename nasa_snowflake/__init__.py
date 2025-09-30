@@ -1,2 +1,1 @@
-from .my_pipeline import nasa_temperature_pipeline
-
+from nasa_snowflake.my_pipeline import nasa_temperature_pipeline
