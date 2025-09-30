@@ -42,7 +42,8 @@ def extract_variables() -> pd.DataFrame:
 
     for f in files:
         # f هو HTTPFile → لازم نستخدم f.open()
-        with xr.open_dataset(f.open(), engine="h5netcdf") as ds:
+        with  xr.open_dataset(f, engine="h5netcdf") as ds:
+\
             for var in VARIABLES:
                 if var in ds.variables:
                     df = ds[var].to_dataframe().reset_index()
@@ -116,3 +117,4 @@ def nasa_variables_pipeline():
     data = extract_variables()
     transformed = transform_variables(data)
     load_variables_to_snowflake(transformed)
+
