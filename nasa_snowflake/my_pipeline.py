@@ -1,7 +1,7 @@
 import xarray as xr
 import pandas as pd
 import snowflake.connector
-from dagster import job, op, Out, Output
+from dagster import job, op
 import earthaccess
 
 # ==========================
@@ -20,14 +20,14 @@ VARIABLES = ["T2M", "QV2M", "T2MDEW", "U10M", "V10M", "PS", "TQV", "SLP", "T2MWE
 # ==========================
 # DAGSTER OPS
 # ==========================
-@op(out=Out(pd.DataFrame))
-def extract_variables():
+@op
+def extract_variables() -> pd.DataFrame:
     all_data = []
 
-    # ✅ Login to NASA Earthdata using env vars
+    # ✅ Login to NASA Earthdata using environment variables
     earthaccess.login(strategy="environment")
 
-    # Search dataset
+    # Search NASA dataset
     results = earthaccess.search_data(
         short_name="M2T1NXSLV",
         version="5.12.4",
@@ -37,16 +37,17 @@ def extract_variables():
 
     print(f"Found {len(results)} files.")
 
-    # ✅ Open datasets as HTTPFile objects
+    # Open remote files (no local download)
     files = earthaccess.open(results)
 
     for f in files:
-        # نفتح الـ HTTPFile بـ xarray
-        with xr.open_dataset(f, engine="h5netcdf") as ds:
+        # f هو HTTPFile → لازم نستخدم f.open()
+        with xr.open_dataset(f.open(), engine="h5netcdf") as ds:
             for var in VARIABLES:
                 if var in ds.variables:
                     df = ds[var].to_dataframe().reset_index()
                     df["variable"] = var
+                    # ناخد أول تايم ستامب كـ reference
                     df["timestamp"] = pd.to_datetime(ds.time.values[0])
                     all_data.append(df)
 
@@ -54,12 +55,11 @@ def extract_variables():
         raise ValueError("No data found. Check search parameters!")
 
     combined_df = pd.concat(all_data, ignore_index=True)
+    return combined_df
 
-    return Output(combined_df, "result")
 
-
-@op(out=Out(pd.DataFrame))
-def transform_variables(df: pd.DataFrame):
+@op
+def transform_variables(df: pd.DataFrame) -> pd.DataFrame:
     transformed = (
         df.groupby(["variable", df["timestamp"].dt.month])
         .mean(numeric_only=True)
@@ -68,15 +68,11 @@ def transform_variables(df: pd.DataFrame):
     transformed.rename(columns={"timestamp": "month"}, inplace=True)
     transformed["month"] = transformed["month"].astype(int)
     transformed["avg_value"] = transformed.iloc[:, 2]
-    final = transformed[["variable", "month", "avg_value"]]
-
-    return Output(final, "result")
+    return transformed[["variable", "month", "avg_value"]]
 
 
 @op
 def load_variables_to_snowflake(df: pd.DataFrame):
-    conn = None
-    cur = None
     try:
         conn = snowflake.connector.connect(
             account=SNOWFLAKE_ACCOUNT,
@@ -97,20 +93,19 @@ def load_variables_to_snowflake(df: pd.DataFrame):
             )
         """)
 
-        rows = df.to_records(index=False).tolist()
-        insert_sql = "INSERT INTO NASA_VARIABLES (variable, month, avg_value) VALUES (%s, %s, %s)"
-        cur.executemany(insert_sql, rows)
+        for _, row in df.iterrows():
+            cur.execute(
+                "INSERT INTO NASA_VARIABLES (variable, month, avg_value) VALUES (%s, %s, %s)",
+                (row["variable"], int(row["month"]), float(row["avg_value"]))
+            )
 
         conn.commit()
-        print(f"Inserted {len(rows)} rows into NASA_VARIABLES ✅")
 
     except Exception as e:
-        print(f"❌ Error loading to Snowflake: {e}")
+        print(f"Error loading to Snowflake: {e}")
     finally:
-        if cur:
-            cur.close()
-        if conn:
-            conn.close()
+        cur.close()
+        conn.close()
 
 
 # ==========================
