@@ -1,115 +1,91 @@
-import xarray as xr
-import pandas as pd
-import snowflake.connector
-from dagster import job, op
+import dagster
 import earthaccess
+import pandas as pd
+from snowflake.connector import connect
 
-# ==========================
-# Snowflake Config
-# ==========================
-SNOWFLAKE_ACCOUNT = "KBZQPZO-WX06551"
-SNOWFLAKE_USER = "A7MEDESSO"
-SNOWFLAKE_AUTHENTICATOR = "externalbrowser"
-SNOWFLAKE_ROLE = "ACCOUNTADMIN"
-SNOWFLAKE_WAREHOUSE = "NASA_WH"
-SNOWFLAKE_DATABASE = "NASA_DB"
-SNOWFLAKE_SCHEMA = "PUBLIC"
-
+# المتغيرات المطلوبة
 VARIABLES = ["T2M", "QV2M", "T2MDEW", "U10M", "V10M", "PS", "TQV", "SLP", "T2MWET"]
 
-# ==========================
-# DAGSTER OPS
-# ==========================
-@op
-def extract_variables() -> pd.DataFrame:
-    all_data = []
+@dagster.op
+def extract_variables():
+    # login
+    earthaccess.login()
 
-    # Login باستخدام الـ env vars (EARTHDATA_USERNAME / EARTHDATA_PASSWORD)
-    earthaccess.login(strategy="environment")
-
-    # Search NASA dataset
+    # ابحث عن البيانات (ممكن تغيري الفترة الزمنية)
     results = earthaccess.search_data(
-        short_name="M2T1NXSLV",
-        version="5.12.4",
-        temporal=("2022-01-01", "2023-1-1"),
-        bounding_box=(24.70, 22.00, 37.35, 31.67)  # Example Cairo region
+        short_name="MERRA2_400.tavg1_2d_slv_Nx",
+        cloud_hosted=True,
+        temporal=("2020-01-01", "2020-12-31"),
     )
 
-    print(f"Found {len(results)} granules.")
-
-    # Open datasets مباشرة من cloud بدون تحميل
     datasets = earthaccess.open(results)
 
     for ds in datasets:
+        df = pd.DataFrame({"time": ds["time"].values})
         for var in VARIABLES:
             if var in ds.variables:
-                df = ds[var].to_dataframe().reset_index()
-                df["variable"] = var
-                df["timestamp"] = pd.to_datetime(ds.time.values[0])
-                all_data.append(df)
-
-    if not all_data:
-        raise ValueError("No data found. Check search parameters!")
-
-    combined_df = pd.concat(all_data, ignore_index=True)
-    return combined_df
+                df[var] = ds[var].mean(dim=["lat", "lon"]).values
+            else:
+                df[var] = None  # لو المتغير مش موجود في granule ده
+        yield df
 
 
-@op
-def transform_variables(df: pd.DataFrame) -> pd.DataFrame:
-    transformed = (
-        df.groupby(["variable", df["timestamp"].dt.month])
-        .mean(numeric_only=True)
-        .reset_index()
+@dagster.op
+def load_to_snowflake(dfs):
+    conn = connect(
+        user="USERNAME",
+        password="PASSWORD",
+        account="ACCOUNT",
+        warehouse="COMPUTE_WH",
+        database="CLIMATE",
+        schema="PUBLIC",
     )
-    transformed.rename(columns={"timestamp": "month"}, inplace=True)
-    transformed["month"] = transformed["month"].astype(int)
-    transformed["avg_value"] = transformed.iloc[:, 2]
-    return transformed[["variable", "month", "avg_value"]]
+    cur = conn.cursor()
 
-
-@op
-def load_variables_to_snowflake(df: pd.DataFrame):
-    try:
-        conn = snowflake.connector.connect(
-            account=SNOWFLAKE_ACCOUNT,
-            user=SNOWFLAKE_USER,
-            authenticator=SNOWFLAKE_AUTHENTICATOR,
-            warehouse=SNOWFLAKE_WAREHOUSE,
-            database=SNOWFLAKE_DATABASE,
-            schema=SNOWFLAKE_SCHEMA,
-            role=SNOWFLAKE_ROLE
+    # اعملي الجدول لو مش موجود
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS climate_data (
+            time TIMESTAMP,
+            T2M FLOAT,
+            QV2M FLOAT,
+            T2MDEW FLOAT,
+            U10M FLOAT,
+            V10M FLOAT,
+            PS FLOAT,
+            TQV FLOAT,
+            SLP FLOAT,
+            T2MWET FLOAT
         )
+    """)
 
-        cur = conn.cursor()
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS NASA_VARIABLES (
-                variable STRING,
-                month INT,
-                avg_value FLOAT
-            )
-        """)
-
+    # ادخال البيانات
+    for df in dfs:
         for _, row in df.iterrows():
             cur.execute(
-                "INSERT INTO NASA_VARIABLES (variable, month, avg_value) VALUES (%s, %s, %s)",
-                (row["variable"], int(row["month"]), float(row["avg_value"]))
+                """
+                INSERT INTO climate_data
+                (time, T2M, QV2M, T2MDEW, U10M, V10M, PS, TQV, SLP, T2MWET)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                """,
+                (
+                    pd.to_datetime(row["time"]).to_pydatetime(),
+                    float(row.get("T2M", None)) if row.get("T2M") is not None else None,
+                    float(row.get("QV2M", None)) if row.get("QV2M") is not None else None,
+                    float(row.get("T2MDEW", None)) if row.get("T2MDEW") is not None else None,
+                    float(row.get("U10M", None)) if row.get("U10M") is not None else None,
+                    float(row.get("V10M", None)) if row.get("V10M") is not None else None,
+                    float(row.get("PS", None)) if row.get("PS") is not None else None,
+                    float(row.get("TQV", None)) if row.get("TQV") is not None else None,
+                    float(row.get("SLP", None)) if row.get("SLP") is not None else None,
+                    float(row.get("T2MWET", None)) if row.get("T2MWET") is not None else None,
+                ),
             )
 
-        conn.commit()
-
-    except Exception as e:
-        print(f"Error loading to Snowflake: {e}")
-    finally:
-        cur.close()
-        conn.close()
+    cur.close()
+    conn.close()
 
 
-# ==========================
-# DAGSTER JOB
-# ==========================
-@job
-def nasa_variables_pipeline():
-    data = extract_variables()
-    transformed = transform_variables(data)
-    load_variables_to_snowflake(transformed)
+@dagster.job
+def nasa_to_snowflake():
+    dfs = extract_variables()
+    load_to_snowflake(dfs)
