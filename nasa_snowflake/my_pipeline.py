@@ -5,9 +5,11 @@ from dagster import op, job, Out
 from datetime import datetime
 import calendar
 
+# المتغيرات اللي عايزين نسحبها
 VARIABLES = ["T2M", "QV2M", "T2MDEW", "U10M", "V10M", "PS", "TQV", "SLP", "T2MWET"]
 
-DATA_DIR = "/path/to/nasa/files"   # مكان الملفات
+# مكان ملفات NASA
+DATA_DIR = "/path/to/nasa/files"
 
 def get_month_range(year):
     """Generate list of (start_date, end_date) per month"""
@@ -21,41 +23,46 @@ def get_month_range(year):
 
 @op(out=Out(pd.DataFrame))
 def extract_variables(context, year: int = 2023):
-    dfs = []
+    """
+    بدل ما نحمل السنة كلها مرة واحدة → نرجع DataFrame لكل ملف/شهر بـ yield
+    """
     for (start, end) in get_month_range(year):
         context.log.info(f"Processing {start.strftime('%Y-%m')} ...")
-        
-        # اختاري الملفات الخاصة بالشهر ده
+
+        # نختار الملفات الخاصة بالشهر
         monthly_files = [
             f for f in os.listdir(DATA_DIR) 
             if f.endswith(".nc4") and start.strftime("%Y%m") in f
         ]
-        
+
         for f in monthly_files:
-            ds = xr.open_dataset(os.path.join(DATA_DIR, f), engine="h5netcdf", chunks={})
+            file_path = os.path.join(DATA_DIR, f)
+            context.log.info(f"Opening file {file_path}")
+
+            # نفتح الملف
+            ds = xr.open_dataset(file_path, engine="h5netcdf")
+
+            # ناخد المتغيرات المطلوبة
             df = ds[VARIABLES].to_dataframe().reset_index()
-            dfs.append(df)
             ds.close()
-    
-    # نجمع كل الشهور بعد ما نعمل لهم concat
-    final_df = pd.concat(dfs, ignore_index=True)
-    context.log.info(f"Final dataframe shape: {final_df.shape}")
-    return final_df
+
+            context.log.info(f"Yielding dataframe of shape {df.shape}")
+            yield df   # نرجع جزء واحد في المرة
 
 @op
 def transform_variables(context, df: pd.DataFrame):
-    context.log.info("Transforming variables...")
-    # أي transformations
+    context.log.info(f"Transforming batch with shape {df.shape}")
+    # ممكن تضيفي أي transformations هنا
     return df
 
 @op
 def load_variables_to_snowflake(context, df: pd.DataFrame):
     context.log.info(f"Loading {len(df)} rows to Snowflake...")
-    # هنا الكود اللي يلود في Snowflake
+    # الكود الخاص بـ Snowflake هنا
     return "done"
 
 @job
 def nasa_variables_pipeline():
-    df = extract_variables()
-    transformed = transform_variables(df)
+    extracted = extract_variables()
+    transformed = transform_variables(extracted)
     load_variables_to_snowflake(transformed)
