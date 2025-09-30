@@ -18,7 +18,7 @@ SNOWFLAKE_WAREHOUSE = "NASA_WH"
 SNOWFLAKE_DATABASE = "NASA_DB"
 SNOWFLAKE_SCHEMA = "PUBLIC"
 
-VARIABLES = ["T2M"]  # درجة حرارة 2 متر
+VARIABLES = ["QV2M", "T2MDEW", "T2MWET"]  # الرطوبة، نقطة الندى، الحرارة الرطبة
 
 # ==========================
 # Helper Function
@@ -69,7 +69,7 @@ def search_nasa_files(context):
 @op
 def process_single_file(context, granule) -> pd.DataFrame:
     """
-    معالجة ملف واحد وحساب المتوسط اليومي
+    معالجة ملف واحد وحساب المتوسط اليومي للمتغيرات الثلاثة
     """
     try:
         context.log.info(f"📥 Streaming file: {granule['meta']['native-id']}")
@@ -106,6 +106,8 @@ def process_single_file(context, granule) -> pd.DataFrame:
                 daily_avg["variable"] = var
                 
                 all_daily_data.append(daily_avg)
+            else:
+                context.log.warning(f"⚠️ Variable {var} not found in dataset")
         
         ds.close()
         
@@ -146,7 +148,7 @@ def transform_daily_data(context, df: pd.DataFrame) -> pd.DataFrame:
     daily_summary = (
         df.groupby(["date", "variable"])
         .agg({
-            list(df.columns)[3]: 'mean',  # أول عمود بيانات (T2M عادة)
+            list(df.columns)[3]: 'mean',  # أول عمود بيانات
             'lat': 'count'  # عدد القياسات
         })
         .reset_index()
@@ -191,7 +193,7 @@ def load_daily_to_snowflake(context, df: pd.DataFrame):
         
         # ننشئ الجدول لو غير موجود
         cur.execute("""
-            CREATE TABLE IF NOT EXISTS NASA_DAILY_TEMPERATURE (
+            CREATE TABLE IF NOT EXISTS NASA_DAILY_WEATHER (
                 date DATE,
                 year INT,
                 month INT,
@@ -205,7 +207,7 @@ def load_daily_to_snowflake(context, df: pd.DataFrame):
         
         # batch insert للبيانات اليومية
         insert_query = """
-            INSERT INTO NASA_DAILY_TEMPERATURE 
+            INSERT INTO NASA_DAILY_WEATHER 
             (date, year, month, day, variable, avg_value, measurement_count) 
             VALUES (%s, %s, %s, %s, %s, %s, %s)
         """
@@ -245,9 +247,9 @@ def load_daily_to_snowflake(context, df: pd.DataFrame):
 # ==========================
 
 @job
-def nasa_daily_temperature_pipeline():
+def nasa_daily_weather_pipeline():
     """
-    Pipeline لمعالجة بيانات درجة الحرارة اليومية
+    Pipeline لمعالجة بيانات الطقس اليومية (الرطوبة، نقطة الندى، الحرارة الرطبة)
     """
     # بحث عن الملفات
     files = search_nasa_files()
@@ -269,6 +271,5 @@ if __name__ == "__main__":
     # تشغيل اختباري
     from dagster import execute_pipeline
     
-    result = execute_pipeline(nasa_daily_temperature_pipeline)
-    print(f"✅ Pipeline finished: {result.success}")
-
+    result = execute_pipeline(nasa_daily_weather_pipeline)
+    print(f"✅ Weather pipeline finished: {result.success}")
