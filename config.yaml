@@ -1,0 +1,5 @@
+ops:
+  extract_temperature:
+    config:
+      year: 2022
+      month: 3
