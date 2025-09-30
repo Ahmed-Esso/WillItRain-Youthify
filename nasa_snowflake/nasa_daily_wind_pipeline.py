@@ -48,19 +48,33 @@ def calculate_wind_direction(u_component, v_component):
         direction += 360
     return direction
 
+def calculate_circular_mean(angles):
+    """حساب المتوسط الدائري للزوايا (لاتجاه الرياح)"""
+    sin_sum = sum(math.sin(math.radians(angle)) for angle in angles)
+    cos_sum = sum(math.cos(math.radians(angle)) for angle in angles)
+    
+    if sin_sum == 0 and cos_sum == 0:
+        return 0
+    
+    mean_angle = math.degrees(math.atan2(sin_sum, cos_sum))
+    if mean_angle < 0:
+        mean_angle += 360
+    
+    return mean_angle
+
 # ==========================
 # DAGSTER OPS - DAILY AVERAGE
 # ==========================
 
 @op(out=DynamicOut())
-def search_nasa_files(context):
+def search_nasa_wind_files(context):
     """
-    بحث عن ملفات NASA للفترة المطلوبة
+    بحث عن ملفات NASA للفترة المطلوبة للرياح والضغط
     """
     context.log.info("🔍 Logging into NASA Earthdata...")
     auth = earthaccess.login(strategy="environment")
     
-    context.log.info("🔍 Searching for NASA files...")
+    context.log.info("🔍 Searching for NASA wind files...")
     results = earthaccess.search_data(
         short_name="M2T1NXSLV",
         version="5.12.4",
@@ -68,22 +82,22 @@ def search_nasa_files(context):
         bounding_box=(24.70, 22.00, 37.35, 31.67)  # منطقة القاهرة
     )
     
-    context.log.info(f"✅ Found {len(results)} files")
+    context.log.info(f"✅ Found {len(results)} wind files")
     
     for idx, granule in enumerate(results):
         yield DynamicOutput(
             value=granule,
-            mapping_key=f"file_{idx}"
+            mapping_key=f"wind_file_{idx}"
         )
 
 
 @op
-def process_single_file(context, granule) -> pd.DataFrame:
+def process_single_wind_file(context, granule) -> pd.DataFrame:
     """
-    معالجة ملف واحد وحساب المتوسط اليومي للمتغيرات
+    معالجة ملف واحد وحساب المتوسط اليومي للرياح والضغط
     """
     try:
-        context.log.info(f"📥 Streaming file: {granule['meta']['native-id']}")
+        context.log.info(f"📥 Streaming wind file: {granule['meta']['native-id']}")
         
         file_stream = earthaccess.open([granule])[0]
         ds = xr.open_dataset(file_stream, engine="h5netcdf")
@@ -92,7 +106,7 @@ def process_single_file(context, granule) -> pd.DataFrame:
         
         for var in VARIABLES:
             if var in ds.variables:
-                context.log.info(f"📊 Processing variable: {var}")
+                context.log.info(f"📊 Processing wind variable: {var}")
                 
                 df = ds[[var]].to_dataframe().reset_index()
                 
@@ -108,7 +122,7 @@ def process_single_file(context, granule) -> pd.DataFrame:
                 
                 all_daily_data.append(daily_avg)
             else:
-                context.log.warning(f"⚠️ Variable {var} not found in dataset")
+                context.log.warning(f"⚠️ Wind variable {var} not found in dataset")
         
         # معالجة خاصة لبيانات الرياح لحساب سرعة واتجاه الرياح
         if "U10M" in ds.variables and "V10M" in ds.variables:
@@ -149,42 +163,28 @@ def process_single_file(context, granule) -> pd.DataFrame:
         ds.close()
         
         if not all_daily_data:
-            context.log.warning(f"⚠️ No variables found in file")
+            context.log.warning(f"⚠️ No wind variables found in file")
             return pd.DataFrame()
         
         combined = pd.concat(all_daily_data, ignore_index=True)
-        context.log.info(f"✅ Processed {len(combined)} daily records from file")
+        context.log.info(f"✅ Processed {len(combined)} daily wind records from file")
         
         return combined
         
     except Exception as e:
-        context.log.error(f"❌ Error processing file: {e}")
+        context.log.error(f"❌ Error processing wind file: {e}")
         return pd.DataFrame()
-
-def calculate_circular_mean(angles):
-    """حساب المتوسط الدائري للزوايا (لاتجاه الرياح)"""
-    sin_sum = sum(math.sin(math.radians(angle)) for angle in angles)
-    cos_sum = sum(math.cos(math.radians(angle)) for angle in angles)
-    
-    if sin_sum == 0 and cos_sum == 0:
-        return 0
-    
-    mean_angle = math.degrees(math.atan2(sin_sum, cos_sum))
-    if mean_angle < 0:
-        mean_angle += 360
-    
-    return mean_angle
 
 
 @op
-def transform_daily_data(context, df: pd.DataFrame) -> pd.DataFrame:
+def transform_wind_data(context, df: pd.DataFrame) -> pd.DataFrame:
     """
-    تحويل البيانات اليومية للتخزين في Snowflake
+    تحويل بيانات الرياح والضغط اليومية للتخزين في Snowflake
     """
     if df.empty:
         return df
     
-    context.log.info(f"🔄 Transforming {len(df)} daily records...")
+    context.log.info(f"🔄 Transforming {len(df)} daily wind records...")
     
     required_cols = ["date", "variable", "lat", "lon"]
     missing_cols = [col for col in required_cols if col not in df.columns]
@@ -219,28 +219,28 @@ def transform_daily_data(context, df: pd.DataFrame) -> pd.DataFrame:
         "avg_value", "measurement_count"
     ]]
     
-    context.log.info(f"✅ Transformed to {len(result)} daily summary records")
+    context.log.info(f"✅ Transformed to {len(result)} daily wind summary records")
     
     return result
 
 
 @op
-def load_daily_to_snowflake(context, df: pd.DataFrame):
+def load_wind_to_snowflake(context, df: pd.DataFrame):
     """
-    تحميل البيانات اليومية لـ Snowflake
+    تحميل بيانات الرياح والضغط اليومية لـ Snowflake
     """
     if df.empty:
-        context.log.warning("⚠️ Empty dataframe - skipping load")
+        context.log.warning("⚠️ Empty wind dataframe - skipping load")
         return "skipped"
     
-    context.log.info(f"📤 Loading {len(df)} daily records to Snowflake...")
+    context.log.info(f"📤 Loading {len(df)} daily wind records to Snowflake...")
     
     try:
         conn = get_snowflake_connection()
         cur = conn.cursor()
         
         cur.execute("""
-            CREATE TABLE IF NOT EXISTS NASA_DAILY_WEATHER (
+            CREATE TABLE IF NOT EXISTS NASA_DAILY_WIND_PRESSURE (
                 date DATE,
                 year INT,
                 month INT,
@@ -253,7 +253,7 @@ def load_daily_to_snowflake(context, df: pd.DataFrame):
         """)
         
         insert_query = """
-            INSERT INTO NASA_DAILY_WEATHER 
+            INSERT INTO NASA_DAILY_WIND_PRESSURE 
             (date, year, month, day, variable, avg_value, measurement_count) 
             VALUES (%s, %s, %s, %s, %s, %s, %s)
         """
@@ -274,7 +274,7 @@ def load_daily_to_snowflake(context, df: pd.DataFrame):
         cur.executemany(insert_query, data_to_insert)
         conn.commit()
         
-        context.log.info(f"✅ Successfully loaded {len(df)} daily records")
+        context.log.info(f"✅ Successfully loaded {len(df)} daily wind records")
         
         cur.close()
         conn.close()
@@ -282,22 +282,22 @@ def load_daily_to_snowflake(context, df: pd.DataFrame):
         return "success"
         
     except Exception as e:
-        context.log.error(f"❌ Error loading to Snowflake: {e}")
+        context.log.error(f"❌ Error loading wind data to Snowflake: {e}")
         raise
 
 
 @job
-def nasa_daily_weather_pipeline():
+def nasa_daily_wind_pipeline():
     """
-    Pipeline لمعالجة بيانات الطقس اليومية (سرعة الرياح، الضغط السطحي، ضغط مستوى البحر)
+    Pipeline لمعالجة بيانات الرياح والضغط اليومية
     """
-    files = search_nasa_files()
-    processed = files.map(process_single_file)
-    transformed = processed.map(transform_daily_data)
-    transformed.map(load_daily_to_snowflake)
+    files = search_nasa_wind_files()
+    processed = files.map(process_single_wind_file)
+    transformed = processed.map(transform_wind_data)
+    transformed.map(load_wind_to_snowflake)
 
 
 if __name__ == "__main__":
     from dagster import execute_pipeline
     result = execute_pipeline(nasa_daily_wind_pipeline)
-    print(f"✅ Weather pipeline finished: {result.success}")
+    print(f"✅ Wind pipeline finished: {result.success}")
