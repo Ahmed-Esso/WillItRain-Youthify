@@ -1,4 +1,5 @@
 import dagster
+from dagster import job
 import earthaccess
 import pandas as pd
 from snowflake.connector import connect
@@ -84,10 +85,14 @@ def load_to_snowflake(dfs):
     cur.close()
     conn.close()
 
+from dagster import job
 
-@dagster.job
+# باقي الـ ops (extract_variables, load_to_snowflake, الخ)
+
+@job
 def nasa_variables_pipeline():
     dfs = extract_variables()
     load_to_snowflake(dfs)
+
 
 
