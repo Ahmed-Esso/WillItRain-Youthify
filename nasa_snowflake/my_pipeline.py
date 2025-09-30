@@ -55,7 +55,7 @@ def search_nasa_files(context):
     results = earthaccess.search_data(
         short_name="M2T1NXSLV",
         version="5.12.4",
-        temporal=("2022-01-01", "2023-01-01"),
+        temporal=("2022-01-01", "2022-02-01"),
         bounding_box=(24.70, 22.00, 37.35, 31.67)  # القاهرة
     )
     
@@ -229,3 +229,4 @@ def nasa_variables_pipeline():
     # كل نتيجة هتتحول وتترفع
     transformed = processed.map(transform_variables)
     transformed.map(load_to_snowflake)
+
