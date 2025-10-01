@@ -69,7 +69,7 @@ def get_wind_category(speed):
 # ==========================
 
 @op(out=DynamicOut())
-def search_nasa_files_2022(context):
+def search_nasa_files_2022_wind(context):
     """
     بحث عن ملفات NASA لسنة 2022 كاملة
     """
@@ -95,7 +95,7 @@ def search_nasa_files_2022(context):
 
 
 @op
-def process_single_file_v10m(context, granule) -> pd.DataFrame:
+def process_single_file_v10m_wind(context, granule) -> pd.DataFrame:
     """
     معالجة ملف واحد وحساب المتوسط اليومي لـ V10M
     """
@@ -153,7 +153,7 @@ def process_single_file_v10m(context, granule) -> pd.DataFrame:
 
 
 @op
-def transform_daily_v10m(context, df: pd.DataFrame) -> pd.DataFrame:
+def transform_daily_v10m_wind(context, df: pd.DataFrame) -> pd.DataFrame:
     """
     تحويل البيانات اليومية لـ V10M للتخزين في Snowflake
     """
@@ -223,7 +223,7 @@ def transform_daily_v10m(context, df: pd.DataFrame) -> pd.DataFrame:
 
 
 @op
-def load_daily_v10m_to_snowflake(context, df: pd.DataFrame):
+def load_daily_v10m_to_snowflake_wind(context, df: pd.DataFrame):
     """
     تحميل بيانات سرعة الرياح اليومية لـ Snowflake
     """
@@ -314,13 +314,13 @@ def nasa_daily_wind_speed_2022_pipeline():
     Pipeline لمعالجة بيانات سرعة الرياح اليومية لسنة 2022
     """
     # بحث عن الملفات لسنة 2022
-    files = search_nasa_files_2022()
+    files = search_nasa_files_2022_wind()
     
     # معالجة كل ملف وحساب المتوسطات اليومية لـ V10M
-    processed = files.map(process_single_file_v10m)
+    processed = files.map(process_single_file_v10m_wind)
     
     # تحويل البيانات اليومية
-    transformed = processed.map(transform_daily_v10m)
+    transformed = processed.map(transform_daily_v10m_wind)
     
     # تحميل البيانات اليومية لـ Snowflake
-    transformed.map(load_daily_v10m_to_snowflake)
+    transformed.map(load_daily_v10m_to_snowflake_wind)
