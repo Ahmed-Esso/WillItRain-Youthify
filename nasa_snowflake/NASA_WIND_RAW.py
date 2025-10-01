@@ -327,7 +327,7 @@ def load_daily_wind_speed_to_snowflake(context, df: pd.DataFrame):
 # ==========================
 
 @job
-def nasa_daily_real_wind_speed_2022_pipeline():
+def nasa_daily_real_wind_2022_pipeline():
     """
     Pipeline لمعالجة بيانات سرعة الرياح الحقيقية اليومية لسنة 2022
     """
@@ -348,4 +348,4 @@ def nasa_daily_real_wind_speed_2022_pipeline():
 # ==========================
 if __name__ == "__main__":
     # لتشغيل الـ pipeline مباشرة (اختياري)
-    result = nasa_daily_real_wind_speed_2022_pipeline.execute_in_process()
+    result = nasa_daily_real_wind_2022_pipeline.execute_in_process()
