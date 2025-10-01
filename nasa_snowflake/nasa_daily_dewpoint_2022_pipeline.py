@@ -253,7 +253,7 @@ def nasa_daily_dewpoint_2022_pipeline():
     Pipeline لمعالجة بيانات نقطة الندى اليومية لسنة 2022
     """
     # بحث عن الملفات لسنة 2022
-    files = search_nasa_files_2022()
+    files = search_nasa_files_depoint_2022()  # ⬅️ غيرت هنا من search_nasa_files_2022 إلى search_nasa_files_depoint_2022
     
     # معالجة كل ملف وحساب المتوسطات اليومية لـ T2MDEW
     processed = files.map(process_single_file_t2mdew)
