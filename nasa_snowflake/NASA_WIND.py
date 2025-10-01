@@ -91,7 +91,7 @@ def search_nasa_files_2022_real_wind(context):
     results = earthaccess.search_data(
         short_name="M2T1NXSLV",
         version="5.12.4",
-        temporal=("2022-01-01", "2022-12-31"),  # سنة 2022 كاملة
+        temporal=("2022-01-01", "2022-01-31"),  # سنة 2022 كاملة
         bounding_box=(24.70, 22.00, 37.35, 31.67)  # منطقة القاهرة
     )
     
