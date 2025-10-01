@@ -18,7 +18,7 @@ SNOWFLAKE_WAREHOUSE = "NASA_WH"
 SNOWFLAKE_DATABASE = "NASA_DB"
 SNOWFLAKE_SCHEMA = "PUBLIC"
 
-VARIABLES = ["PL"]  # ضغط السطح
+VARIABLES = ["PS"]  # ضغط السطح
 
 # ==========================
 # Helper Function
@@ -61,11 +61,11 @@ def get_pressure_category(pressure_hpa):
         return "Very High"
 
 # ==========================
-# DAGSTER OPS - DAILY AVERAGE FOR PL
+# DAGSTER OPS - DAILY AVERAGE FOR PS
 # ==========================
 
 @op(out=DynamicOut())
-def search_nasa_files_pl_2022(context):
+def search_nasa_files_ps_2022(context):
     """
     بحث عن ملفات NASA لسنة 2022 كاملة
     """
@@ -77,7 +77,7 @@ def search_nasa_files_pl_2022(context):
         short_name="M2T1NXSLV",
         version="5.12.4",
         temporal=("2022-01-01", "2022-12-31"),  # سنة 2022 كاملة
-        bounding_box=(25.0, 22.0, 37.0, 32.0)  # منطقة القاهرة
+        bounding_box=(25.0, 22.0, 37.0, 32.0)  # مصر كلها
     )
     
     context.log.info(f"✅ Found {len(results)} files for 2022")
@@ -91,9 +91,9 @@ def search_nasa_files_pl_2022(context):
 
 
 @op
-def process_single_file_pl(context, granule) -> pd.DataFrame:
+def process_single_file_ps(context, granule) -> pd.DataFrame:
     """
-    معالجة ملف واحد وحساب المتوسط اليومي لـ PL
+    معالجة ملف واحد وحساب المتوسط اليومي لـ PS
     """
     try:
         context.log.info(f"📥 Streaming file: {granule['meta']['native-id']}")
@@ -106,7 +106,7 @@ def process_single_file_pl(context, granule) -> pd.DataFrame:
         
         all_daily_data = []
         
-        # معالجة المتغير PL
+        # معالجة المتغير PS
         for var in VARIABLES:
             if var in ds.variables:
                 context.log.info(f"📊 Processing variable: {var}")
@@ -122,6 +122,16 @@ def process_single_file_pl(context, granule) -> pd.DataFrame:
                 # نحول الوقت لـ datetime
                 df["time"] = pd.to_datetime(df["time"])
                 
+                # نتأكد أن البيانات ضمن نطاق مصر
+                df = df[
+                    (df["lat"] >= 22.0) & (df["lat"] <= 32.0) &
+                    (df["lon"] >= 25.0) & (df["lon"] <= 37.0)
+                ]
+                
+                if df.empty:
+                    context.log.warning("⚠️ No data within Egypt boundaries")
+                    continue
+                
                 # نجمع البيانات بالساعة ونحسب المتوسط اليومي
                 df["date"] = df["time"].dt.date  # نأخذ التاريخ فقط (بدون وقت)
                 
@@ -134,12 +144,12 @@ def process_single_file_pl(context, granule) -> pd.DataFrame:
         ds.close()
         
         if not all_daily_data:
-            context.log.warning(f"⚠️ No PL variable found in file")
+            context.log.warning(f"⚠️ No PS variable found in file")
             return pd.DataFrame()
         
         # نجمع كل البيانات اليومية
         combined = pd.concat(all_daily_data, ignore_index=True)
-        context.log.info(f"✅ Processed {len(combined)} daily PL records from file")
+        context.log.info(f"✅ Processed {len(combined)} daily PS records from file")
         
         return combined
         
@@ -149,14 +159,14 @@ def process_single_file_pl(context, granule) -> pd.DataFrame:
 
 
 @op
-def transform_daily_pl(context, df: pd.DataFrame) -> pd.DataFrame:
+def transform_daily_ps(context, df: pd.DataFrame) -> pd.DataFrame:
     """
-    تحويل البيانات اليومية لـ PL للتخزين في Snowflake
+    تحويل البيانات اليومية لـ PS للتخزين في Snowflake
     """
     if df.empty:
         return df
     
-    context.log.info(f"🔄 Transforming {len(df)} daily PL records...")
+    context.log.info(f"🔄 Transforming {len(df)} daily PS records...")
     
     # نتأكد من وجود الأعمدة المطلوبة
     required_cols = ["date", "variable", "lat", "lon"]
@@ -170,7 +180,7 @@ def transform_daily_pl(context, df: pd.DataFrame) -> pd.DataFrame:
     daily_summary = (
         df.groupby(["date", "variable"])
         .agg({
-            'PL': 'mean',  # متوسط ضغط السطح
+            'PS': 'mean',  # متوسط ضغط السطح
             'lat': 'count' # عدد القياسات
         })
         .reset_index()
@@ -178,7 +188,7 @@ def transform_daily_pl(context, df: pd.DataFrame) -> pd.DataFrame:
     
     # نعيد تسمية الأعمدة
     daily_summary.rename(columns={
-        'PL': 'avg_surface_pressure',
+        'PS': 'avg_surface_pressure',
         'lat': 'measurement_count'
     }, inplace=True)
     
@@ -198,7 +208,7 @@ def transform_daily_pl(context, df: pd.DataFrame) -> pd.DataFrame:
     daily_stats = (
         df.groupby(["date"])
         .agg({
-            'PL': ['max', 'min', 'std']
+            'PS': ['max', 'min', 'std']
         })
         .reset_index()
     )
@@ -214,13 +224,13 @@ def transform_daily_pl(context, df: pd.DataFrame) -> pd.DataFrame:
         "pressure_hpa", "pressure_category", "measurement_count"
     ]]
     
-    context.log.info(f"✅ Transformed to {len(result)} daily PL summary records")
+    context.log.info(f"✅ Transformed to {len(result)} daily PS summary records")
     
     return result
 
 
 @op
-def load_daily_pl_to_snowflake(context, df: pd.DataFrame):
+def load_daily_ps_to_snowflake(context, df: pd.DataFrame):
     """
     تحميل بيانات ضغط السطح اليومية لـ Snowflake
     """
@@ -228,7 +238,7 @@ def load_daily_pl_to_snowflake(context, df: pd.DataFrame):
         context.log.warning("⚠️ Empty dataframe - skipping load")
         return "skipped"
     
-    context.log.info(f"📤 Loading {len(df)} daily PL records to Snowflake...")
+    context.log.info(f"📤 Loading {len(df)} daily PS records to Snowflake...")
     
     try:
         conn = get_snowflake_connection()
@@ -291,7 +301,7 @@ def load_daily_pl_to_snowflake(context, df: pd.DataFrame):
         cur.executemany(insert_query, data_to_insert)
         conn.commit()
         
-        context.log.info(f"✅ Successfully loaded {len(df)} daily PL records")
+        context.log.info(f"✅ Successfully loaded {len(df)} daily PS records")
         
         cur.close()
         conn.close()
@@ -313,13 +323,13 @@ def nasa_daily_surface_pressure_2022_pipeline():
     Pipeline لمعالجة بيانات ضغط السطح اليومية لسنة 2022
     """
     # بحث عن الملفات لسنة 2022
-    files = search_nasa_files_pl_2022()
+    files = search_nasa_files_ps_2022()
     
-    # معالجة كل ملف وحساب المتوسطات اليومية لـ PL
-    processed = files.map(process_single_file_pl)
+    # معالجة كل ملف وحساب المتوسطات اليومية لـ PS
+    processed = files.map(process_single_file_ps)
     
     # تحويل البيانات اليومية
-    transformed = processed.map(transform_daily_pl)
+    transformed = processed.map(transform_daily_ps)
     
     # تحميل البيانات اليومية لـ Snowflake
-    transformed.map(load_daily_pl_to_snowflake)
+    transformed.map(load_daily_ps_to_snowflake)
