@@ -76,13 +76,13 @@ def calculate_wind_direction(u_component, v_component):
     return direction_deg
 
 # ==========================
-# DAGSTER OPS - DAILY AVERAGE FOR WIND SPEED
+# DAGSTER OPS - REAL WIND SPEED (أسماء معدلة)
 # ==========================
 
 @op(out=DynamicOut())
-def search_nasa_files_2022_wind(context):
+def search_nasa_files_2022_real_wind(context):
     """
-    بحث عن ملفات NASA لسنة 2022 كاملة
+    بحث عن ملفات NASA لسنة 2022 كاملة - للإصدار الجديد
     """
     context.log.info("🔍 Logging into NASA Earthdata...")
     auth = earthaccess.login(strategy="environment")
@@ -91,7 +91,7 @@ def search_nasa_files_2022_wind(context):
     results = earthaccess.search_data(
         short_name="M2T1NXSLV",
         version="5.12.4",
-        temporal=("2022-01-01", "2022-1-31"),  # سنة 2022 كاملة
+        temporal=("2022-01-01", "2022-12-31"),  # سنة 2022 كاملة
         bounding_box=(24.70, 22.00, 37.35, 31.67)  # منطقة القاهرة
     )
     
@@ -105,7 +105,7 @@ def search_nasa_files_2022_wind(context):
         )
 
 @op
-def process_single_file_wind_components(context, granule) -> pd.DataFrame:
+def process_single_file_real_wind_components(context, granule) -> pd.DataFrame:
     """
     معالجة ملف واحد وحساب سرعة الرياح الحقيقية من U10M و V10M
     """
@@ -171,7 +171,7 @@ def process_single_file_wind_components(context, granule) -> pd.DataFrame:
         return pd.DataFrame()
 
 @op
-def transform_daily_wind_speed(context, df: pd.DataFrame) -> pd.DataFrame:
+def transform_daily_real_wind_speed(context, df: pd.DataFrame) -> pd.DataFrame:
     """
     تحويل البيانات اليومية لسرعة الرياح الحقيقية
     """
@@ -235,7 +235,7 @@ def transform_daily_wind_speed(context, df: pd.DataFrame) -> pd.DataFrame:
     return result
 
 @op
-def load_daily_wind_speed_to_snowflake(context, df: pd.DataFrame):
+def load_daily_real_wind_speed_to_snowflake(context, df: pd.DataFrame):
     """
     تحميل بيانات سرعة الرياح الحقيقية لـ Snowflake
     """
@@ -323,29 +323,44 @@ def load_daily_wind_speed_to_snowflake(context, df: pd.DataFrame):
         raise
 
 # ==========================
-# DAGSTER JOB - DAILY REAL WIND SPEED PIPELINE 2022
+# DAGSTER JOB - REAL WIND SPEED PIPELINE 2022
 # ==========================
 
 @job
-def nasa_daily_real_wind_2022_pipeline():
+def nasa_daily_real_wind_speed_2022_pipeline():
     """
     Pipeline لمعالجة بيانات سرعة الرياح الحقيقية اليومية لسنة 2022
     """
     # بحث عن الملفات لسنة 2022
-    files = search_nasa_files_2022_wind()
+    files = search_nasa_files_2022_real_wind()
     
     # معالجة كل ملف وحساب سرعة الرياح الحقيقية من U10M و V10M
-    processed = files.map(process_single_file_wind_components)
+    processed = files.map(process_single_file_real_wind_components)
     
     # تحويل البيانات اليومية
-    transformed = processed.map(transform_daily_wind_speed)
+    transformed = processed.map(transform_daily_real_wind_speed)
     
     # تحميل البيانات اليومية لـ Snowflake
-    transformed.map(load_daily_wind_speed_to_snowflake)
+    transformed.map(load_daily_real_wind_speed_to_snowflake)
+
+# ==========================
+# REPOSITORY DEFINITION
+# ==========================
+from dagster import repository
+
+@repository
+def nasa_repository():
+    """
+    Repository واحد يحتوي على جميع الـ Jobs
+    """
+    return [
+        nasa_daily_real_wind_speed_2022_pipeline,
+        # يمكنك إضافة الـ job القديم هنا بعد تعديل أسماء الـ ops فيه أيضاً
+    ]
 
 # ==========================
 # MAIN EXECUTION (Optional)
 # ==========================
 if __name__ == "__main__":
     # لتشغيل الـ pipeline مباشرة (اختياري)
-    result = nasa_daily_real_wind_2022_pipeline.execute_in_process()
+    result = nasa_daily_real_wind_speed_2022_pipeline.execute_in_process()
