@@ -41,7 +41,7 @@ def get_snowflake_connection():
 # ==========================
 
 @op(out=DynamicOut())
-def search_nasa_files_2022(context):
+def search_nasa_files_depoint_2022(context):
     """
     بحث عن ملفات NASA لسنة 2022 كاملة
     """
