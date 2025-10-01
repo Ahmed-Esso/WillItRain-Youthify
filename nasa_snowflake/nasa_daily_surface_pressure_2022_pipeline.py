@@ -77,7 +77,7 @@ def search_nasa_files_pl_2022(context):
         short_name="M2T1NXSLV",
         version="5.12.4",
         temporal=("2022-01-01", "2022-12-31"),  # سنة 2022 كاملة
-        bounding_box=(24.70, 22.00, 37.35, 31.67)  # منطقة القاهرة
+        bounding_box=((25.0, 22.0, 37.0, 32.0)  # منطقة القاهرة
     )
     
     context.log.info(f"✅ Found {len(results)} files for 2022")
