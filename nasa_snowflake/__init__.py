@@ -1,25 +1,18 @@
-from dagster import Definitions
-from .nasa_daily_weather_pipeline import nasa_daily_weather_pipeline
-from .nasa_daily_dewpoint_2022_pipeline import nasa_daily_dewpoint_2022_pipeline
-from .nasa_daily_wetbulb_2022_pipeline import nasa_daily_wetbulb_2022_pipeline
-from .nasa_daily_wind_speed_2022_pipeline import nasa_daily_wind_speed_2022_pipeline
-from .nasa_daily_surface_pressure_2022_pipeline import nasa_daily_surface_pressure_2022_pipeline
-from .nasa_daily_sea_level_pressure_2022_pipeline import nasa_daily_sea_level_pressure_2022_pipeline
-from .nasa_daily_total_precipitable_water_2022_pipeline import nasa_daily_total_precipitable_water_2022_pipeline
+from dagster import Definitions, job
+import pkgutil, importlib, inspect, sys
 
+# هنجيب اسم الباكيج (مثلاً nasa_snowflake)
+package_name = __name__
 
+jobs = []
 
+# نعمل import لكل modules في الباكيج
+for _, module_name, _ in pkgutil.iter_modules(sys.modules[package_name].__path__):
+    module = importlib.import_module(f"{package_name}.{module_name}")
+    # ندور على أي object معمول له decorator @job
+    for name, obj in inspect.getmembers(module):
+        if isinstance(obj, job):
+            jobs.append(obj)
 
-
-# ده اللي Dagster هيستخدمه عشان يلاقي الـ jobs
-defs = Definitions(
-    jobs=[nasa_daily_weather_pipeline,nasa_daily_dewpoint_2022_pipeline,nasa_daily_wetbulb_2022_pipeline,nasa_daily_wind_speed_2022_pipeline,nasa_daily_surface_pressure_2022_pipeline,nasa_daily_sea_level_pressure_2022_pipeline,nasa_daily_total_precipitable_water_2022_pipeline]
-)
-
-
-
-
-
-
-
-
+# نعرف الـ definitions
+defs = Definitions(jobs=jobs)
