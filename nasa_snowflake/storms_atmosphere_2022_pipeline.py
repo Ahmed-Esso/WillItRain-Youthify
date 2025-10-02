@@ -35,11 +35,11 @@ def get_snowflake_connection():
     )
 
 # ==========================
-# COMMON SEARCH OP (مشترك لجميع الـ pipelines)
+# SEARCH OP
 # ==========================
 
 @op(out=DynamicOut())
-def search_nasa_files_2022_common(context):
+def search_nasa_files_2022(context):
     context.log.info("🔍 Logging into NASA Earthdata...")
     auth = earthaccess.login(strategy="environment")
     
@@ -60,38 +60,30 @@ def search_nasa_files_2022_common(context):
         )
 
 # ==========================
-# PRECIPITATION & CLOUD FRACTION PIPELINE
+# PRECIPITATION & CLOUD FRACTION PIPELINE ONLY
 # ==========================
 
-VARIABLES_PRECIP_CLOUD = ["precipitation", "cloud_fraction"]
+VARIABLES = ["precipitation", "cloud_fraction"]
 
 @op
-def process_single_file_precip_cloud(context, granule) -> pd.DataFrame:
+def process_single_file(context, granule) -> pd.DataFrame:
     try:
-        context.log.info(f"📥 Streaming file for precip/cloud: {granule['meta']['native-id']}")
+        context.log.info(f"📥 Streaming file: {granule['meta']['native-id']}")
         file_stream = earthaccess.open([granule])[0]
         ds = xr.open_dataset(file_stream, engine="h5netcdf")
         
         all_daily_data = []
         
-        for var in VARIABLES_PRECIP_CLOUD:
+        for var in VARIABLES:
             if var in ds.variables:
-                context.log.info(f"📊 Processing variable: {var}")
                 df = ds[[var]].to_dataframe().reset_index()
                 
                 if "time" not in df.columns:
                     continue
                 
                 df["time"] = pd.to_datetime(df["time"])
-                df = df[
-                    (df["lat"] >= 22.0) & (df["lat"] <= 32.0) &
-                    (df["lon"] >= 25.0) & (df["lon"] <= 37.0)
-                ]
-                
-                if df.empty:
-                    continue
-                
                 df["date"] = df["time"].dt.date
+                
                 daily_avg = df.groupby(["date", "lat", "lon"])[var].mean().reset_index()
                 daily_avg["variable"] = var
                 all_daily_data.append(daily_avg)
@@ -102,15 +94,15 @@ def process_single_file_precip_cloud(context, granule) -> pd.DataFrame:
             return pd.DataFrame()
         
         combined = pd.concat(all_daily_data, ignore_index=True)
-        context.log.info(f"✅ Processed {len(combined)} daily precip/cloud records")
+        context.log.info(f"✅ Processed {len(combined)} records")
         return combined
         
     except Exception as e:
-        context.log.error(f"❌ Error processing precip/cloud file: {e}")
+        context.log.error(f"❌ Error processing file: {e}")
         return pd.DataFrame()
 
 @op
-def transform_daily_precip_cloud(context, df: pd.DataFrame) -> pd.DataFrame:
+def transform_daily_data(context, df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return df
     
@@ -120,12 +112,7 @@ def transform_daily_precip_cloud(context, df: pd.DataFrame) -> pd.DataFrame:
         .reset_index()
     )
     
-    if 'precipitation' in df['variable'].values:
-        daily_summary.rename(columns={list(df.columns)[3]: 'avg_value'}, inplace=True)
-    elif 'cloud_fraction' in df['variable'].values:
-        daily_summary.rename(columns={list(df.columns)[3]: 'avg_value'}, inplace=True)
-    
-    daily_summary.rename(columns={'lat': 'measurement_count'}, inplace=True)
+    daily_summary.rename(columns={list(df.columns)[3]: 'avg_value', 'lat': 'measurement_count'}, inplace=True)
     daily_summary["year"] = pd.to_datetime(daily_summary["date"]).dt.year
     daily_summary["month"] = pd.to_datetime(daily_summary["date"]).dt.month
     daily_summary["day"] = pd.to_datetime(daily_summary["date"]).dt.day
@@ -134,7 +121,7 @@ def transform_daily_precip_cloud(context, df: pd.DataFrame) -> pd.DataFrame:
     return result
 
 @op
-def load_daily_precip_cloud_to_snowflake(context, df: pd.DataFrame):
+def load_daily_to_snowflake(context, df: pd.DataFrame):
     if df.empty:
         return "skipped"
     
@@ -166,123 +153,12 @@ def load_daily_precip_cloud_to_snowflake(context, df: pd.DataFrame):
     cur.close()
     conn.close()
     
-    context.log.info(f"✅ Loaded {len(df)} precip/cloud records")
+    context.log.info(f"✅ Loaded {len(df)} records")
     return "success"
 
 @job
 def nasa_daily_precip_cloud_2022_pipeline():
-    files = search_nasa_files_2022_common()
-    processed = files.map(process_single_file_precip_cloud)
-    transformed = processed.map(transform_daily_precip_cloud)
-    transformed.map(load_daily_precip_cloud_to_snowflake)
-
-# ==========================
-# SURFACE PRESSURE PIPELINE (PS)
-# ==========================
-
-VARIABLES_PS = ["PS"]
-
-@op
-def process_single_file_ps(context, granule) -> pd.DataFrame:
-    try:
-        context.log.info(f"📥 Streaming file for PS: {granule['meta']['native-id']}")
-        file_stream = earthaccess.open([granule])[0]
-        ds = xr.open_dataset(file_stream, engine="h5netcdf")
-        
-        all_daily_data = []
-        
-        for var in VARIABLES_PS:
-            if var in ds.variables:
-                df = ds[[var]].to_dataframe().reset_index()
-                
-                if "time" not in df.columns:
-                    continue
-                
-                df["time"] = pd.to_datetime(df["time"])
-                df = df[
-                    (df["lat"] >= 22.0) & (df["lat"] <= 32.0) &
-                    (df["lon"] >= 25.0) & (df["lon"] <= 37.0)
-                ]
-                
-                if df.empty:
-                    continue
-                
-                df["date"] = df["time"].dt.date
-                daily_avg = df.groupby(["date", "lat", "lon"])[var].mean().reset_index()
-                daily_avg["variable"] = var
-                all_daily_data.append(daily_avg)
-        
-        ds.close()
-        
-        if not all_daily_data:
-            return pd.DataFrame()
-        
-        combined = pd.concat(all_daily_data, ignore_index=True)
-        context.log.info(f"✅ Processed {len(combined)} daily PS records")
-        return combined
-        
-    except Exception as e:
-        context.log.error(f"❌ Error processing PS file: {e}")
-        return pd.DataFrame()
-
-@op
-def transform_daily_ps(context, df: pd.DataFrame) -> pd.DataFrame:
-    if df.empty:
-        return df
-    
-    daily_summary = (
-        df.groupby(["date", "variable"])
-        .agg({'PS': 'mean', 'lat': 'count'})
-        .reset_index()
-    )
-    
-    daily_summary.rename(columns={'PS': 'avg_value', 'lat': 'measurement_count'}, inplace=True)
-    daily_summary["year"] = pd.to_datetime(daily_summary["date"]).dt.year
-    daily_summary["month"] = pd.to_datetime(daily_summary["date"]).dt.month
-    daily_summary["day"] = pd.to_datetime(daily_summary["date"]).dt.day
-    
-    result = daily_summary[["date", "year", "month", "day", "variable", "avg_value", "measurement_count"]]
-    return result
-
-@op
-def load_daily_ps_to_snowflake(context, df: pd.DataFrame):
-    if df.empty:
-        return "skipped"
-    
-    conn = get_snowflake_connection()
-    cur = conn.cursor()
-    
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS NASA_DAILY_SURFACE_PRESSURE (
-            date DATE, year INT, month INT, day INT,
-            variable STRING, avg_value FLOAT, measurement_count INT,
-            loaded_at TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
-        )
-    """)
-    
-    insert_query = """
-        INSERT INTO NASA_DAILY_SURFACE_PRESSURE 
-        (date, year, month, day, variable, avg_value, measurement_count) 
-        VALUES (%s, %s, %s, %s, %s, %s, %s)
-    """
-    
-    data_to_insert = [
-        (row["date"], int(row["year"]), int(row["month"]), int(row["day"]), 
-         row["variable"], float(row["avg_value"]), int(row["measurement_count"]))
-        for _, row in df.iterrows()
-    ]
-    
-    cur.executemany(insert_query, data_to_insert)
-    conn.commit()
-    cur.close()
-    conn.close()
-    
-    context.log.info(f"✅ Loaded {len(df)} PS records")
-    return "success"
-
-@job
-def nasa_daily_surface_pressure_2022_pipeline():
-    files = search_nasa_files_2022_common()
-    processed = files.map(process_single_file_ps)
-    transformed = processed.map(transform_daily_ps)
-    transformed.map(load_daily_ps_to_snowflake)
+    files = search_nasa_files_2022()
+    processed = files.map(process_single_file)
+    transformed = processed.map(transform_daily_data)
+    transformed.map(load_daily_to_snowflake)
