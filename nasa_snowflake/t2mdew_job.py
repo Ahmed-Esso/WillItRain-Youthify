@@ -20,6 +20,7 @@ def search_files_t2mdew(context):
         temporal=("2022-01-01", "2022-12-31"),
         bounding_box=ALEX_BOUNDING_BOX
     )
+    context.log.info(f"Found {len(results)} files for {VARIABLE}")
     for i, g in enumerate(results):
         yield DynamicOutput(g, mapping_key=f"file_{i}")
 
@@ -28,24 +29,46 @@ def process_file_t2mdew(context, granule):
     try:
         stream = earthaccess.open([granule])[0]
         ds = xr.open_dataset(stream, engine="h5netcdf")
+        
+        # Debug: show all available variables
+        available_vars = list(ds.data_vars.keys())
+        context.log.info(f"Available variables in file: {available_vars}")
+        
         if VARIABLE not in ds:
-            context.log.warning(f"Variable {VARIABLE} not found in dataset")
+            context.log.warning(f"Variable {VARIABLE} not found. Available: {available_vars}")
+            
+            # Try common alternative names for dew point
+            alternatives = ["T2M_DEW", "DEWPT", "DEWP", "TD2M", "D2M"]
+            for alt_var in alternatives:
+                if alt_var in ds:
+                    context.log.info(f"Found alternative variable: {alt_var}")
+                    # Use the alternative variable
+                    df = ds[[alt_var]].to_dataframe().reset_index()
+                    df = df[
+                        (df.lat >= 30.8) & (df.lat <= 31.3) &
+                        (df.lon >= 29.5) & (df.lon <= 31.5)
+                    ]
+                    # Convert from Kelvin to Celsius if needed
+                    df[alt_var] = df[alt_var] - 273.15
+                    ds.close()
+                    return df[["time", alt_var]].rename(columns={alt_var: VARIABLE})
+            
             return pd.DataFrame()
         
+        # If T2MDEW is found, process normally
         df = ds[[VARIABLE]].to_dataframe().reset_index()
         df = df[
             (df.lat >= 30.8) & (df.lat <= 31.3) &
             (df.lon >= 29.5) & (df.lon <= 31.5)
         ]
         
-        # T2MDEW هو درجة حرارة نقطة الندى - تحويل من كلفن إلى مئوية
-        if VARIABLE in THERMAL_VARS:
-            df[VARIABLE] = df[VARIABLE] - 273.15  # Kelvin to Celsius
+        # Convert from Kelvin to Celsius
+        df[VARIABLE] = df[VARIABLE] - 273.15
             
         ds.close()
         return df[["time", VARIABLE]]
     except Exception as e:
-        context.log.error(f"Error processing file: {e}")
+        context.log.error(f"Error processing T2MDEW file: {e}")
         return pd.DataFrame()
 
 @op(name="transform_daily_t2mdew")
@@ -58,11 +81,9 @@ def transform_daily_t2mdew(context, df):
     agg_dict = {VARIABLE: ["mean", "min", "max", "std", "count"]}
     result = df.groupby("date").agg(agg_dict).reset_index()
     
-    # إعادة تسمية الأعمدة بالترتيب الصحيح
     result.columns = ["date", "avg_value", "min_value", "max_value", "std_value", "measurement_count"]
     result["variable"] = VARIABLE
     
-    # إعادة ترتيب الأعمدة لتتناسب مع الجدول في Snowflake
     result = result[["date", "variable", "avg_value", "min_value", "max_value", "std_value", "measurement_count"]]
     
     context.log.info(f"Transformed {len(result)} daily records for {VARIABLE}")
@@ -78,7 +99,6 @@ def load_to_snowflake_t2mdew(context, df):
     conn = get_snowflake_connection()
     cur = conn.cursor()
     
-    # إنشاء الجدول إذا لم يكن موجوداً
     cur.execute(f"""
         CREATE TABLE IF NOT EXISTS {table_name} (
             date DATE, 
@@ -92,10 +112,8 @@ def load_to_snowflake_t2mdew(context, df):
         )
     """)
     
-    # تحويل DataFrame إلى قائمة من الصفوف
     rows = [tuple(r) for r in df.values]
     
-    # استخدام استعلام INSERT مع تحديد الأعمدة بشكل صريح
     insert_query = f"""
         INSERT INTO {table_name} (date, variable, avg_value, min_value, max_value, std_value, measurement_count) 
         VALUES (%s, %s, %s, %s, %s, %s, %s)
@@ -105,11 +123,6 @@ def load_to_snowflake_t2mdew(context, df):
         cur.executemany(insert_query, rows)
         conn.commit()
         context.log.info(f"Successfully loaded {len(rows)} T2MDEW rows into {table_name}")
-        
-        # التحقق من البيانات المدرجة
-        cur.execute(f"SELECT COUNT(*) FROM {table_name} WHERE variable = %s", (VARIABLE,))
-        count = cur.fetchone()[0]
-        context.log.info(f"Total T2MDEW records in table: {count}")
         
     except Exception as e:
         context.log.error(f"Error loading T2MDEW data to Snowflake: {e}")
