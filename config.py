@@ -32,8 +32,8 @@ VARIABLE_TO_DATASET = {
     "TQL": "M2I1NXASM",
     
     # Dynamics & Boundary
-    "OMEGA500": "M2I3NVASM",
-    "OMEGA": "M2I3NVASM",
+    "OMEGA500": "M2I1NXASM",
+    "OMEGA": "M2I1NXASM",
     "DISPH": "M2T1NXFLX",
     "PBLH": "M2T1NXFLX",      # PBLTOP في طلبك = PBLH في MERRA-2
     "TO3": "M2T1NXCHM",       # TOX (الأوزون الكلي) = TO3 في MERRA-2
