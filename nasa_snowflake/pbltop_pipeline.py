@@ -18,7 +18,7 @@ SNOWFLAKE_WAREHOUSE = "NASA_WH"
 SNOWFLAKE_DATABASE = "NASA_DB"
 SNOWFLAKE_SCHEMA = "PUBLIC"
 
-VARIABLES = ["OMEGA500"]  # السرعة الرأسية عند 500 hPa
+VARIABLES = ["PBLTOP"]  # ارتفاع طبقة الحدود الكوكبية
 
 # ==========================
 # Helper Function
@@ -47,25 +47,25 @@ def get_season(month):
     else:
         return "Autumn"
 
-def get_omega_category(omega):
-    """تصنيف السرعة الرأسية"""
-    if omega < -0.5:
-        return "Strong Upward"
-    elif omega < -0.1:
-        return "Moderate Upward"
-    elif omega < 0.1:
-        return "Neutral"
-    elif omega < 0.5:
-        return "Moderate Downward"
+def get_pbl_height_category(height):
+    """تصنيف ارتفاع طبقة الحدود الكوكبية"""
+    if height < 500:
+        return "Very Shallow"
+    elif height < 1000:
+        return "Shallow"
+    elif height < 1500:
+        return "Moderate"
+    elif height < 2000:
+        return "Deep"
     else:
-        return "Strong Downward"
+        return "Very Deep"
 
 # ==========================
-# DAGSTER OPS - DAILY AVERAGE FOR OMEGA500
+# DAGSTER OPS - DAILY AVERAGE FOR PBLTOP
 # ==========================
 
 @op(out=DynamicOut())
-def search_nasa_files_omega500_2022(context):
+def search_nasa_files_pbltop_2022(context):
     """
     بحث عن ملفات NASA لسنة 2022 كاملة لكل مصر
     """
@@ -74,7 +74,6 @@ def search_nasa_files_omega500_2022(context):
     
     context.log.info("🔍 Searching for NASA files for 2022...")
     
-    # مصر كلها - حدود جغرافية شاملة
     results = earthaccess.search_data(
         short_name="M2T1NXSLV",
         version="5.12.4",
@@ -91,8 +90,8 @@ def search_nasa_files_omega500_2022(context):
         )
 
 @op
-def process_single_file_omega500(context, granule) -> pd.DataFrame:
-    """معالجة ملف واحد وحساب المتوسط اليومي لـ OMEGA500"""
+def process_single_file_pbltop(context, granule) -> pd.DataFrame:
+    """معالجة ملف واحد وحساب المتوسط اليومي لـ PBLTOP"""
     try:
         context.log.info(f"📥 Streaming file: {granule['meta']['native-id']}")
         file_stream = earthaccess.open([granule])[0]
@@ -127,11 +126,11 @@ def process_single_file_omega500(context, granule) -> pd.DataFrame:
         ds.close()
         
         if not all_daily_data:
-            context.log.warning(f"⚠️ No OMEGA500 variable found in file")
+            context.log.warning(f"⚠️ No PBLTOP variable found in file")
             return pd.DataFrame()
         
         combined = pd.concat(all_daily_data, ignore_index=True)
-        context.log.info(f"✅ Processed {len(combined)} daily OMEGA500 records from file")
+        context.log.info(f"✅ Processed {len(combined)} daily PBLTOP records from file")
         return combined
         
     except Exception as e:
@@ -139,12 +138,12 @@ def process_single_file_omega500(context, granule) -> pd.DataFrame:
         return pd.DataFrame()
 
 @op
-def transform_daily_omega500(context, df: pd.DataFrame) -> pd.DataFrame:
-    """تحويل البيانات اليومية لـ OMEGA500"""
+def transform_daily_pbltop(context, df: pd.DataFrame) -> pd.DataFrame:
+    """تحويل البيانات اليومية لـ PBLTOP"""
     if df.empty:
         return df
     
-    context.log.info(f"🔄 Transforming {len(df)} daily OMEGA500 records...")
+    context.log.info(f"🔄 Transforming {len(df)} daily PBLTOP records...")
     
     required_cols = ["date", "variable", "lat", "lon"]
     missing_cols = [col for col in required_cols if col not in df.columns]
@@ -155,66 +154,66 @@ def transform_daily_omega500(context, df: pd.DataFrame) -> pd.DataFrame:
     
     daily_summary = (
         df.groupby(["date", "variable"])
-        .agg({'OMEGA500': 'mean', 'lat': 'count'})
+        .agg({'PBLTOP': 'mean', 'lat': 'count'})
         .reset_index()
     )
     
-    daily_summary.rename(columns={'OMEGA500': 'avg_vertical_velocity', 'lat': 'measurement_count'}, inplace=True)
+    daily_summary.rename(columns={'PBLTOP': 'avg_pbl_height', 'lat': 'measurement_count'}, inplace=True)
     daily_summary["year"] = pd.to_datetime(daily_summary["date"]).dt.year
     daily_summary["month"] = pd.to_datetime(daily_summary["date"]).dt.month
     daily_summary["day"] = pd.to_datetime(daily_summary["date"]).dt.day
     daily_summary["day_of_year"] = pd.to_datetime(daily_summary["date"]).dt.dayofyear
     daily_summary["day_name"] = pd.to_datetime(daily_summary["date"]).dt.day_name()
     daily_summary["season"] = daily_summary["month"].apply(get_season)
-    daily_summary["omega_category"] = daily_summary["avg_vertical_velocity"].apply(get_omega_category)
+    daily_summary["pbl_height_category"] = daily_summary["avg_pbl_height"].apply(get_pbl_height_category)
     
     daily_stats = (
         df.groupby(["date"])
-        .agg({'OMEGA500': ['max', 'min', 'std']})
+        .agg({'PBLTOP': ['max', 'min', 'std']})
         .reset_index()
     )
-    daily_stats.columns = ['date', 'max_vertical_velocity', 'min_vertical_velocity', 'omega_std']
+    daily_stats.columns = ['date', 'max_pbl_height', 'min_pbl_height', 'pbl_std']
     
     final_result = pd.merge(daily_summary, daily_stats, on="date", how="left")
     
     result = final_result[[
         "date", "year", "month", "day", "day_of_year", "day_name", "season", "variable", 
-        "avg_vertical_velocity", "max_vertical_velocity", "min_vertical_velocity", "omega_std",
-        "omega_category", "measurement_count"
+        "avg_pbl_height", "max_pbl_height", "min_pbl_height", "pbl_std",
+        "pbl_height_category", "measurement_count"
     ]]
     
-    context.log.info(f"✅ Transformed to {len(result)} daily OMEGA500 summary records for Egypt")
+    context.log.info(f"✅ Transformed to {len(result)} daily PBLTOP summary records for Egypt")
     return result
 
 @op
-def load_daily_omega500_to_snowflake(context, df: pd.DataFrame):
-    """تحميل بيانات OMEGA500 لـ Snowflake"""
+def load_daily_pbltop_to_snowflake(context, df: pd.DataFrame):
+    """تحميل بيانات PBLTOP لـ Snowflake"""
     if df.empty:
         context.log.warning("⚠️ Empty dataframe - skipping load")
         return "skipped"
     
-    context.log.info(f"📤 Loading {len(df)} daily OMEGA500 records to Snowflake...")
+    context.log.info(f"📤 Loading {len(df)} daily PBLTOP records to Snowflake...")
     
     try:
         conn = get_snowflake_connection()
         cur = conn.cursor()
         
         cur.execute("""
-            CREATE TABLE IF NOT EXISTS NASA_DAILY_VERTICAL_VELOCITY (
+            CREATE TABLE IF NOT EXISTS NASA_DAILY_PBL_HEIGHT (
                 date DATE, year INT, month INT, day INT, day_of_year INT,
                 day_name STRING, season STRING, variable STRING,
-                avg_vertical_velocity FLOAT, max_vertical_velocity FLOAT,
-                min_vertical_velocity FLOAT, omega_std FLOAT,
-                omega_category STRING, measurement_count INT,
+                avg_pbl_height FLOAT, max_pbl_height FLOAT,
+                min_pbl_height FLOAT, pbl_std FLOAT,
+                pbl_height_category STRING, measurement_count INT,
                 loaded_at TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
             )
         """)
         
         insert_query = """
-            INSERT INTO NASA_DAILY_VERTICAL_VELOCITY 
+            INSERT INTO NASA_DAILY_PBL_HEIGHT 
             (date, year, month, day, day_of_year, day_name, season, variable, 
-             avg_vertical_velocity, max_vertical_velocity, min_vertical_velocity, omega_std,
-             omega_category, measurement_count) 
+             avg_pbl_height, max_pbl_height, min_pbl_height, pbl_std,
+             pbl_height_category, measurement_count) 
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
         
@@ -222,9 +221,9 @@ def load_daily_omega500_to_snowflake(context, df: pd.DataFrame):
             (
                 row["date"], int(row["year"]), int(row["month"]), int(row["day"]), 
                 int(row["day_of_year"]), row["day_name"], row["season"], row["variable"], 
-                float(row["avg_vertical_velocity"]), float(row["max_vertical_velocity"]),
-                float(row["min_vertical_velocity"]), float(row["omega_std"]),
-                row["omega_category"], int(row["measurement_count"])
+                float(row["avg_pbl_height"]), float(row["max_pbl_height"]),
+                float(row["min_pbl_height"]), float(row["pbl_std"]),
+                row["pbl_height_category"], int(row["measurement_count"])
             )
             for _, row in df.iterrows()
         ]
@@ -234,7 +233,7 @@ def load_daily_omega500_to_snowflake(context, df: pd.DataFrame):
         cur.close()
         conn.close()
         
-        context.log.info(f"✅ Successfully loaded {len(df)} daily OMEGA500 records for Egypt")
+        context.log.info(f"✅ Successfully loaded {len(df)} daily PBLTOP records for Egypt")
         return "success"
         
     except Exception as e:
@@ -242,9 +241,9 @@ def load_daily_omega500_to_snowflake(context, df: pd.DataFrame):
         raise
 
 @job
-def nasa_daily_vertical_velocity_2022_pipeline():
-    """Pipeline لبيانات السرعة الرأسية عند 500 hPa"""
-    files = search_nasa_files_omega500_2022()
-    processed = files.map(process_single_file_omega500)
-    transformed = processed.map(transform_daily_omega500)
-    transformed.map(load_daily_omega500_to_snowflake)
+def nasa_daily_pbl_height_2022_pipeline():
+    """Pipeline لبيانات ارتفاع طبقة الحدود الكوكبية"""
+    files = search_nasa_files_pbltop_2022()
+    processed = files.map(process_single_file_pbltop)
+    transformed = processed.map(transform_daily_pbltop)
+    transformed.map(load_daily_pbltop_to_snowflake)
