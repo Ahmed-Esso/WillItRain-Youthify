@@ -54,24 +54,50 @@ def transform_wind_daily(context, df):
     )
 
 @op
-def load_wind_to_snowflake(context, df):
-    if df.empty: return
+def load_wind_to_snowflake(context, df: pd.DataFrame):
+    """تحميل بيانات سرعة الرياح لـ Snowflake"""
+    if df.empty:
+        return
+    
     conn = get_snowflake_connection()
     cur = conn.cursor()
+    
+    # إنشاء الجدول
     cur.execute("""
         CREATE OR REPLACE TABLE NASA_WIND_SPEED_ALEX (
-            date DATE, variable STRING, avg_value FLOAT, min_value FLOAT,
-            max_value FLOAT, std_value FLOAT, measurement_count INT,
+            date DATE,
+            variable STRING,
+            avg_value FLOAT,
+            min_value FLOAT,
+            max_value FLOAT,
+            std_value FLOAT,
+            measurement_count INT,
             loaded_at TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
         )
     """)
-    rows = [tuple(r) for r in df.values]
+    
+    # ✅ الإصلاح: ترتيب البيانات حسب أعمدة الجدول
+    rows = []
+    for _, row in df.iterrows():
+        rows.append((
+            row["date"],              # DATE
+            row["variable"],          # STRING ('wind_speed')
+            float(row["avg_value"]),  # FLOAT
+            float(row["min_value"]),  # FLOAT
+            float(row["max_value"]),  # FLOAT
+            float(row["std_value"]),  # FLOAT
+            int(row["measurement_count"])  # INT (رقم، مش نص!)
+        ))
+    
+    # ✅ استخدم INSERT مع تحديد أسماء الأعمدة
     cur.executemany(
-        "INSERT INTO NASA_WIND_SPEED_ALEX VALUES (%s, %s, %s, %s, %s, %s, %s, DEFAULT)",
+        "INSERT INTO NASA_WIND_SPEED_ALEX (date, variable, avg_value, min_value, max_value, std_value, measurement_count) VALUES (%s, %s, %s, %s, %s, %s, %s)",
         rows
     )
+    
     conn.commit()
     cur.close()
+    context.log.info(f"✅ تم تحميل {len(df)} يوم لـ wind_speed")
 
 @job
 def wind_speed_job():
