@@ -2,29 +2,23 @@
 import xarray as xr
 import pandas as pd
 from dagster import job, op, DynamicOut, DynamicOutput, get_dagster_logger
-from dagster import ConfigurableResource, EnvVar
+from dagster import ConfigurableResource
 import earthaccess
 from datetime import datetime
-from typing import List, Optional
-import os
+import snowflake.connector
 
 # ==========================
-# CONFIGURATION USING ENV VARS (Fixed)
+# CONFIGURATION USING ENV VARS
 # ==========================
 class SnowflakeResource(ConfigurableResource):
-    """Snowflake configuration using environment variables"""
+    """Snowflake configuration"""
     account: str
     user: str 
     password: str
-    warehouse: str = "NASA_WH"  # استخدام default value مباشرة
-    database: str = "NASA_DB"   # بدون EnvVar
+    warehouse: str = "NASA_WH"
+    database: str = "NASA_DB"
     schema: str = "PUBLIC"
     role: str = "ACCOUNTADMIN"
-
-class EarthdataConfig(ConfigurableResource):
-    """NASA Earthdata configuration"""
-    username: str
-    password: str
 
 # ==========================
 # HELPER FUNCTIONS
@@ -32,14 +26,23 @@ class EarthdataConfig(ConfigurableResource):
 def init_earthaccess():
     """Initialize earthaccess with environment credentials"""
     try:
-        auth = earthaccess.login(
-            strategy="environment",
-            persist=True
-        )
+        auth = earthaccess.login(strategy="environment", persist=True)
         return auth
     except Exception as e:
         get_dagster_logger().error(f"Earthdata login failed: {e}")
         raise
+
+def get_snowflake_connection(snowflake: SnowflakeResource):
+    """Get Snowflake connection from resource"""
+    return snowflake.connector.connect(
+        account=snowflake.account,
+        user=snowflake.user,
+        password=snowflake.password,
+        warehouse=snowflake.warehouse,
+        database=snowflake.database,
+        schema=snowflake.schema,
+        role=snowflake.role
+    )
 
 # ==========================
 # DAGSTER OPS
@@ -50,16 +53,16 @@ def search_nasa_chlor_a_2022():
     logger = get_dagster_logger()
     
     logger.info("🔍 Logging into NASA Earthdata...")
-    auth = init_earthaccess()
+    init_earthaccess()
     
-    logger.info("🔍 Searching for MODIS Aqua Chlorophyll L3 files for 2022...")
+    logger.info("🔍 Searching for MODIS Aqua Chlorophyll L3 files...")
     
     results = earthaccess.search_data(
         short_name="MODISA_L3m_CHL",
         cloud_hosted=True,
-        temporal=("2022-01-01", "2022-01-10"),  # 10 days for testing
+        temporal=("2022-01-01", "2022-01-05"),  # 5 days for testing
         bounding_box=(25.0, 22.0, 37.0, 32.0),  # Egypt/East Med
-        count=5  # Limit for testing
+        count=3  # Limit for testing
     )
     
     logger.info(f"✅ Found {len(results)} chlor_a files")
@@ -106,19 +109,12 @@ def process_chlor_a_stream(context, granule) -> pd.DataFrame:
             df["date"] = file_date
             df["variable"] = "chlor_a"
             
-            # Calculate daily averages
-            daily_avg = df.groupby(["date", "lat", "lon"])["chlor_a"].mean().reset_index()
-            
-            logger.info(f"✅ Processed {len(daily_avg)} chlor_a records from stream")
-            return daily_avg
+            logger.info(f"✅ Processed {len(df)} chlor_a records from stream")
+            return df
         
     except Exception as e:
         logger.error(f"❌ Error processing stream: {e}")
         return pd.DataFrame()
-    finally:
-        # Ensure stream is closed
-        if 'file_stream' in locals():
-            file_stream.close()
 
 @op
 def transform_daily_data(df: pd.DataFrame) -> pd.DataFrame:
@@ -128,16 +124,17 @@ def transform_daily_data(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return df
     
-    # Aggregate daily statistics
-    daily_summary = (
-        df.groupby(["date", "variable"])
-        .agg({
-            "chlor_a": ["mean", "count", "std"],
-            "lat": "nunique",
-            "lon": "nunique"
-        })
-        .reset_index()
-    )
+    # Calculate daily statistics per location
+    daily_stats = df.groupby(["date", "lat", "lon"]).agg({
+        "chlor_a": "mean"
+    }).reset_index()
+    
+    # Calculate overall daily summary
+    daily_summary = df.groupby(["date", "variable"]).agg({
+        "chlor_a": ["mean", "count", "std"],
+        "lat": "nunique",
+        "lon": "nunique"
+    }).reset_index()
     
     # Flatten column names
     daily_summary.columns = [
@@ -174,19 +171,9 @@ def load_daily_to_snowflake(df: pd.DataFrame, snowflake: SnowflakeResource):
         logger.info("⏭️ No data to load")
         return "skipped"
     
-    import snowflake.connector
-    
     conn = None
     try:
-        conn = snowflake.connector.connect(
-            account=snowflake.account,
-            user=snowflake.user,
-            password=snowflake.password,
-            warehouse=snowflake.warehouse,
-            database=snowflake.database,
-            schema=snowflake.schema,
-            role=snowflake.role
-        )
+        conn = get_snowflake_connection(snowflake)
         cur = conn.cursor()
         
         # Create table if not exists
@@ -239,7 +226,7 @@ def load_daily_to_snowflake(df: pd.DataFrame, snowflake: SnowflakeResource):
         conn.commit()
         
         logger.info(f"✅ Successfully loaded {len(df)} records to Snowflake")
-        return "success"
+        return f"success_{len(df)}_records"
         
     except Exception as e:
         logger.error(f"❌ Error loading to Snowflake: {e}")
@@ -250,38 +237,56 @@ def load_daily_to_snowflake(df: pd.DataFrame, snowflake: SnowflakeResource):
             conn.close()
 
 # ==========================
-# DAGSTER JOBS
+# DAGSTER JOBS - الطريقة الصحيحة للتعامل مع Dynamic Outputs
 # ==========================
 @job
 def nasa_chlor_a_daily_pipeline():
     """Daily pipeline for chlorophyll data processing"""
     
-    # Search for files
+    # Search for files → Dynamic Output
     files = search_nasa_chlor_a_2022()
     
-    # Process each file using stream
+    # Process each file → استخدم .map() للتعامل مع Dynamic Output
     processed = files.map(process_chlor_a_stream)
     
-    # Transform data
+    # Transform data → استخدم .map() مرة أخرى
     transformed = processed.map(transform_daily_data)
     
-    # Load to Snowflake
+    # Load to Snowflake → استخدم .map() للتحميل المتوازي
     transformed.map(load_daily_to_snowflake)
 
-# ==========================
-# بديل أبسط إذا واجهت مشاكل مع ConfigurableResource
-# ==========================
 @job
-def simple_nasa_chlor_a_pipeline():
-    """Simple pipeline without complex configurations"""
+def nasa_chlor_a_test_pipeline():
+    """Test pipeline with simple flow"""
     logger = get_dagster_logger()
-    logger.info("🚀 Starting simple NASA Chlorophyll pipeline...")
+    logger.info("🧪 Starting test pipeline...")
     
+    # نفس الـ pattern باستخدام .map()
     files = search_nasa_chlor_a_2022()
     processed = files.map(process_chlor_a_stream)
     transformed = processed.map(transform_daily_data)
+    results = transformed.map(load_daily_to_snowflake)
     
-    # سنتعامل مع Snowflake بشكل منفصل في البداية
-    for df in transformed:
-        if not df.empty:
-            logger.info(f"📊 Processed {len(df)} records ready for Snowflake")
+    return results
+
+# ==========================
+# SCHEDULED JOBS 
+# ==========================
+from dagster import ScheduleDefinition
+
+daily_schedule = ScheduleDefinition(
+    job=nasa_chlor_a_daily_pipeline,
+    cron_schedule="0 2 * * *",
+    execution_timezone="UTC"
+)
+
+# ==========================
+# DEFINITIONS FOR DAGSTER CLOUD
+# ==========================
+def get_definitions():
+    """Get all Dagster definitions for the project"""
+    return [
+        nasa_chlor_a_daily_pipeline,
+        nasa_chlor_a_test_pipeline,
+        daily_schedule
+    ]
