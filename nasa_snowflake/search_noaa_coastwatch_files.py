@@ -1,241 +1,208 @@
-# my_pipeline_chlora_oceancolor.py
-import io
+# my_pipeline_chlora_earthaccess.py
 import xarray as xr
 import pandas as pd
-import snowflake.connector
-from dagster import job, op, DynamicOut, DynamicOutput
-import requests
-from datetime import datetime, timedelta
+from dagster import job, op, DynamicOut, DynamicOutput, get_dagster_logger
+from dagster import ConfigurableResource, EnvVar
+import earthaccess
+from datetime import datetime
+from typing import List, Optional
 import os
-from urllib.parse import urlencode
 
 # ==========================
-# Snowflake Config
+# CONFIGURATION USING ENV VARS (Best practice for dagster.cloud)
 # ==========================
-SNOWFLAKE_ACCOUNT = "KBZQPZO-WX06551"
-SNOWFLAKE_USER = "A7MEDESSO"
-SNOWFLAKE_PASSWORD = "Ahmedesso@2005"
-SNOWFLAKE_AUTHENTICATOR = "snowflake"
-SNOWFLAKE_ROLE = "ACCOUNTADMIN"
-SNOWFLAKE_WAREHOUSE = "NASA_WH"
-SNOWFLAKE_DATABASE = "NASA_DB"
-SNOWFLAKE_SCHEMA = "PUBLIC"
+class SnowflakeResource(ConfigurableResource):
+    """Snowflake configuration using environment variables"""
+    account: str = EnvVar("SNOWFLAKE_ACCOUNT")
+    user: str = EnvVar("SNOWFLAKE_USER") 
+    password: str = EnvVar("SNOWFLAKE_PASSWORD")
+    warehouse: str = EnvVar("SNOWFLAKE_WAREHOUSE", default="NASA_WH")
+    database: str = EnvVar("SNOWFLAKE_DATABASE", default="NASA_DB")
+    schema: str = EnvVar("SNOWFLAKE_SCHEMA", default="PUBLIC")
+    role: str = EnvVar("SNOWFLAKE_ROLE", default="ACCOUNTADMIN")
+
+class EarthdataConfig(ConfigurableResource):
+    """NASA Earthdata configuration"""
+    username: str = EnvVar("EARTHDATA_USERNAME")
+    password: str = EnvVar("EARTHDATA_PASSWORD")
 
 # ==========================
-# Ocean Color Web Config
+# HELPER FUNCTIONS
 # ==========================
-OCEAN_COLOR_BASE_URL = "https://oceancolor.gsfc.nasa.gov"
-L3_BROWSER_URL = f"{OCEAN_COLOR_BASE_URL}/cgi/l3"
-
-# ==========================
-# Helper Functions
-# ==========================
-def get_snowflake_connection():
-    return snowflake.connector.connect(
-        account=SNOWFLAKE_ACCOUNT,
-        user=SNOWFLAKE_USER,
-        password=SNOWFLAKE_PASSWORD,
-        authenticator=SNOWFLAKE_AUTHENTICATOR,
-        warehouse=SNOWFLAKE_WAREHOUSE,
-        database=SNOWFLAKE_DATABASE,
-        schema=SNOWFLAKE_SCHEMA,
-        role=SNOWFLAKE_ROLE
-    )
-
-def search_oceancolor_files(period="MO", sensor="A", resolution=9, date_range=("2022-01-01", "2022-01-31")):
-    """
-    Search for Ocean Color Level-3 files using their API
-    
-    Parameters:
-    - period: Time period (DAY, MO, 8D, etc.)
-    - sensor: A (Aqua), T (Terra), S (SeaWiFS)
-    - resolution: 9 (9km), 4 (4km), 1 (1km)
-    - date_range: tuple of (start_date, end_date)
-    """
-    
-    params = {
-        'period': period,
-        'sensor': sensor,
-        'resolution': resolution,
-        'prod': 'CHL',  # Chlorophyll
-        'date1': date_range[0],
-        'date2': date_range[1],
-        'north': 37.0,   # Bounding box for Egypt/East Mediterranean
-        'south': 22.0,
-        'west': 25.0,
-        'east': 37.0,
-        'format': 'netcdf',
-        'submit': 'Search'
-    }
-    
-    search_url = f"{L3_BROWSER_URL}?{urlencode(params)}"
-    
+def init_earthaccess():
+    """Initialize earthaccess with environment credentials"""
     try:
-        response = requests.get(search_url)
-        response.raise_for_status()
-        
-        # Parse the response to extract file links
-        file_links = []
-        for line in response.text.split('\n'):
-            if '.nc' in line and 'href' in line:
-                # Extract the actual file URL
-                start = line.find('href="') + 6
-                end = line.find('"', start)
-                if start > 5 and end > start:
-                    file_url = line[start:end]
-                    if file_url.startswith('/'):
-                        file_url = f"{OCEAN_COLOR_BASE_URL}{file_url}"
-                    file_links.append(file_url)
-        
-        return file_links
-    
+        auth = earthaccess.login(
+            strategy="environment",
+            persist=True
+        )
+        return auth
     except Exception as e:
-        print(f"Error searching Ocean Color files: {e}")
-        return []
-
-def download_oceancolor_file(file_url, download_path="downloads"):
-    """Download a NetCDF file from Ocean Color Web"""
-    
-    if not os.path.exists(download_path):
-        os.makedirs(download_path)
-    
-    filename = file_url.split('/')[-1]
-    local_path = os.path.join(download_path, filename)
-    
-    try:
-        response = requests.get(file_url, stream=True)
-        response.raise_for_status()
-        
-        with open(local_path, 'wb') as f:
-            for chunk in response.iter_content(chunk_size=8192):
-                f.write(chunk)
-        
-        return local_path
-    
-    except Exception as e:
-        print(f"Error downloading file {filename}: {e}")
-        return None
+        get_dagster_logger().error(f"Earthdata login failed: {e}")
+        raise
 
 # ==========================
 # DAGSTER OPS
 # ==========================
 @op(out=DynamicOut())
-def search_oceancolor_chlor_a(context):
-    """Search for Chlorophyll-a files from Ocean Color Web"""
+def search_nasa_chlor_a_2022(earthdata_config: EarthdataConfig):
+    """Search for MODIS Aqua Chlorophyll files"""
+    logger = get_dagster_logger()
     
-    context.log.info("🔍 Searching Ocean Color Web for MODIS Aqua Chlorophyll files...")
+    logger.info("🔍 Logging into NASA Earthdata...")
+    auth = init_earthaccess()
     
-    # Search for monthly composites for 2022
-    file_urls = search_oceancolor_files(
-        period="MO",  # Monthly
-        sensor="A",   # Aqua
-        resolution=9, # 9km resolution
-        date_range=("2022-01-01", "2022-1-15")
+    logger.info("🔍 Searching for MODIS Aqua Chlorophyll L3 files for 2022...")
+    
+    results = earthaccess.search_data(
+        short_name="MODISA_L3m_CHL",
+        cloud_hosted=True,
+        temporal=("2022-01-01", "2022-01-10"),  # 10 days for testing
+        bounding_box=(25.0, 22.0, 37.0, 32.0),  # Egypt/East Med
+        count=5  # Limit for testing
     )
     
-    context.log.info(f"✅ Found {len(file_urls)} chlor_a files")
+    logger.info(f"✅ Found {len(results)} chlor_a files")
     
-    for idx, file_url in enumerate(file_urls):
+    for idx, granule in enumerate(results):
         yield DynamicOutput(
-            value=file_url,
+            value=granule,
             mapping_key=f"file_{idx}"
         )
 
 @op
-def download_and_process_chlor_a(context, file_url) -> pd.DataFrame:
-    """Download and process a single chlorophyll file"""
+def process_chlor_a_stream(context, granule) -> pd.DataFrame:
+    """Process file directly using earthaccess stream"""
+    logger = get_dagster_logger()
     
     try:
-        context.log.info(f"📥 Downloading file: {file_url}")
+        logger.info(f"🔗 Streaming file: {granule['meta']['native-id']}")
         
-        # Download the file
-        local_path = download_oceancolor_file(file_url)
-        if not local_path:
-            return pd.DataFrame()
+        # Open file as stream
+        files = earthaccess.open([granule])
+        file_stream = files[0]
         
-        # Open and process the NetCDF file
-        context.log.info(f"🔬 Processing file: {local_path}")
-        ds = xr.open_dataset(local_path)
+        logger.info("📖 Reading NetCDF stream...")
         
-        # Extract chlorophyll data
-        if "chlor_a" in ds.variables:
-            # For L3m products, we get 2D arrays (lat, lon)
-            chlor_data = ds["chlor_a"]
+        # Read data directly from stream
+        with xr.open_dataset(file_stream) as ds:
+            if "chlor_a" not in ds.variables:
+                logger.warning("⚠️ chlor_a not found in file")
+                return pd.DataFrame()
             
             # Convert to DataFrame
-            df = chlor_data.to_dataframe().reset_index()
+            df = ds[["chlor_a"]].to_dataframe().reset_index()
             
-            # Extract date from filename or use file metadata
-            filename = os.path.basename(local_path)
-            # Example filename: A20220101.L3m_MO_CHL_chlor_a_9km.nc
-            date_str = filename[1:9]  # Extract YYYYMMDD from filename
-            file_date = datetime.strptime(date_str, "%Y%m%d").date()
+            # Extract date from metadata
+            start_time = granule['meta'].get('start-time')
+            if start_time:
+                file_date = datetime.strptime(start_time, "%Y-%m-%dT%H:%M:%S.%fZ").date()
+            else:
+                # Fallback: from filename
+                filename = granule['meta']['native-id']
+                date_str = filename[1:9]  # YYYYMMDD from A20220101...
+                file_date = datetime.strptime(date_str, "%Y%m%d").date()
             
             df["date"] = file_date
             df["variable"] = "chlor_a"
             
-            # Clean up
-            ds.close()
-            os.remove(local_path)  # Remove downloaded file after processing
+            # Calculate daily averages
+            daily_avg = df.groupby(["date", "lat", "lon"])["chlor_a"].mean().reset_index()
             
-            context.log.info(f"✅ Processed {len(df)} chlor_a records for date {file_date}")
-            return df
-            
-        else:
-            context.log.warning(f"⚠️ chlor_a not found in file {file_url}")
-            return pd.DataFrame()
+            logger.info(f"✅ Processed {len(daily_avg)} chlor_a records from stream")
+            return daily_avg
         
     except Exception as e:
-        context.log.error(f"❌ Error processing file {file_url}: {e}")
+        logger.error(f"❌ Error processing stream: {e}")
         return pd.DataFrame()
+    finally:
+        # Ensure stream is closed
+        if 'file_stream' in locals():
+            file_stream.close()
 
 @op
-def transform_chlor_a_data(context, df: pd.DataFrame) -> pd.DataFrame:
-    """Transform chlorophyll data for Snowflake"""
+def transform_daily_data(df: pd.DataFrame) -> pd.DataFrame:
+    """Transform chlorophyll data"""
+    logger = get_dagster_logger()
     
     if df.empty:
         return df
     
-    # Calculate daily statistics
-    daily_stats = df.groupby(["date", "variable"]).agg({
-        "chlor_a": ["mean", "count"]
-    }).reset_index()
+    # Aggregate daily statistics
+    daily_summary = (
+        df.groupby(["date", "variable"])
+        .agg({
+            "chlor_a": ["mean", "count", "std"],
+            "lat": "nunique",
+            "lon": "nunique"
+        })
+        .reset_index()
+    )
     
     # Flatten column names
-    daily_stats.columns = ["date", "variable", "avg_value", "measurement_count"]
+    daily_summary.columns = [
+        "date", "variable", "avg_value", "measurement_count", 
+        "std_value", "unique_lats", "unique_lons"
+    ]
     
-    # Extract date components
-    daily_stats["year"] = pd.to_datetime(daily_stats["date"]).dt.year
-    daily_stats["month"] = pd.to_datetime(daily_stats["date"]).dt.month
-    daily_stats["day"] = pd.to_datetime(daily_stats["date"]).dt.day
+    # Add date dimensions
+    daily_summary["year"] = pd.to_datetime(daily_summary["date"]).dt.year
+    daily_summary["month"] = pd.to_datetime(daily_summary["date"]).dt.month
+    daily_summary["day"] = pd.to_datetime(daily_summary["date"]).dt.day
     
-    result = daily_stats[["date", "year", "month", "day", "variable", "avg_value", "measurement_count"]]
+    # Add quality indicator
+    daily_summary["data_quality"] = (
+        daily_summary["measurement_count"] / 
+        (daily_summary["unique_lats"] * daily_summary["unique_lons"])
+    )
     
-    context.log.info(f"📊 Transformed {len(result)} daily records")
+    result = daily_summary[[
+        "date", "year", "month", "day", "variable", 
+        "avg_value", "std_value", "measurement_count",
+        "unique_lats", "unique_lons", "data_quality"
+    ]]
+    
+    logger.info(f"📊 Transformed {len(result)} daily summaries")
     return result
 
 @op
-def load_chlor_a_to_snowflake(context, df: pd.DataFrame):
-    """Load transformed data to Snowflake"""
+def load_daily_to_snowflake(df: pd.DataFrame, snowflake: SnowflakeResource):
+    """Load data to Snowflake"""
+    logger = get_dagster_logger()
     
     if df.empty:
-        context.log.info("⏭️ No data to load")
+        logger.info("⏭️ No data to load")
         return "skipped"
     
+    import snowflake.connector
+    
+    conn = None
     try:
-        conn = get_snowflake_connection()
+        conn = snowflake.connector.connect(
+            account=snowflake.account,
+            user=snowflake.user,
+            password=snowflake.password,
+            warehouse=snowflake.warehouse,
+            database=snowflake.database,
+            schema=snowflake.schema,
+            role=snowflake.role
+        )
         cur = conn.cursor()
         
         # Create table if not exists
         cur.execute("""
-            CREATE TABLE IF NOT EXISTS OCEAN_COLOR_CHLOR_A (
+            CREATE TABLE IF NOT EXISTS NASA_CHLOR_A_STREAM (
                 date DATE,
                 year INT,
                 month INT,
                 day INT,
                 variable STRING,
                 avg_value FLOAT,
+                std_value FLOAT,
                 measurement_count INT,
+                unique_lats INT,
+                unique_lons INT,
+                data_quality FLOAT,
                 file_source STRING,
                 loaded_at TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
             )
@@ -250,74 +217,84 @@ def load_chlor_a_to_snowflake(context, df: pd.DataFrame):
                 int(row["day"]),
                 row["variable"],
                 float(row["avg_value"]),
+                float(row["std_value"]) if pd.notna(row["std_value"]) else None,
                 int(row["measurement_count"]),
-                "OCEAN_COLOR_WEB"
+                int(row["unique_lats"]),
+                int(row["unique_lons"]),
+                float(row["data_quality"]),
+                "DAGSTER_CLOUD_STREAM"
             )
             for _, row in df.iterrows()
         ]
         
         # Insert data
         insert_query = """
-            INSERT INTO OCEAN_COLOR_CHLOR_A 
-            (date, year, month, day, variable, avg_value, measurement_count, file_source)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            INSERT INTO NASA_CHLOR_A_STREAM 
+            (date, year, month, day, variable, avg_value, std_value, 
+             measurement_count, unique_lats, unique_lons, data_quality, file_source)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
         
         cur.executemany(insert_query, data_to_insert)
         conn.commit()
         
-        context.log.info(f"✅ Successfully loaded {len(df)} records to Snowflake")
+        logger.info(f"✅ Successfully loaded {len(df)} records to Snowflake")
         return "success"
         
     except Exception as e:
-        context.log.error(f"❌ Error loading to Snowflake: {e}")
+        logger.error(f"❌ Error loading to Snowflake: {e}")
         return "failed"
     finally:
-        if 'cur' in locals():
+        if conn:
             cur.close()
-        if 'conn' in locals():
             conn.close()
 
 # ==========================
-# DAGSTER JOB
+# DAGSTER JOBS
 # ==========================
 @job
-def ocean_color_chlor_a_pipeline():
-    """Main pipeline for Ocean Color Web chlorophyll data"""
+def nasa_chlor_a_daily_pipeline():
+    """Daily pipeline for chlorophyll data processing"""
     
     # Search for files
-    file_urls = search_oceancolor_chlor_a()
+    files = search_nasa_chlor_a_2022()
     
-    # Download and process each file
-    processed_data = file_urls.map(download_and_process_chlor_a)
+    # Process each file using stream
+    processed = files.map(process_chlor_a_stream)
     
     # Transform data
-    transformed_data = processed_data.map(transform_chlor_a_data)
+    transformed = processed.map(transform_daily_data)
     
     # Load to Snowflake
-    transformed_data.map(load_chlor_a_to_snowflake)
+    transformed.map(load_daily_to_snowflake)
+
+@job
+def nasa_chlor_a_test_pipeline():
+    """Test pipeline with limited data"""
+    logger = get_dagster_logger()
+    logger.info("🧪 Running test pipeline...")
+    
+    # You can create a simplified version for testing
+    files = search_nasa_chlor_a_2022()
+    processed = files.map(process_chlor_a_stream)
+    first_result = processed.collect()[0] if processed else pd.DataFrame()
+    transform_daily_data(first_result)
 
 # ==========================
-# Alternative: NOAA CoastWatch Version
+# SCHEDULED JOBS (For dagster.cloud scheduler)
 # ==========================
-def search_noaa_coastwatch_files():
-    """
-    Alternative method using NOAA CoastWatch
-    CoastWatch provides simpler access to the same NASA data
-    """
-    # NOAA CoastWatch ERDDAP server
-    base_url = "https://coastwatch.pfeg.noaa.gov/erddap/griddap"
-    
-    # Example for MODIS Aqua Chlorophyll
-    dataset_id = "erdMH1chla1day"  # Daily chlorophyll
-    
-    # You would construct the query based on ERDDAP's RESTful API
-    # This is a simplified example
-    pass
+from dagster import ScheduleDefinition
 
-if __name__ == "__main__":
-    # Test the search function
-    files = search_oceancolor_files(period="MO", date_range=("2022-01-01", "2022-03-31"))
-    print(f"Found {len(files)} files:")
-    for file in files:
-        print(f"  - {file}")
+# Schedule for daily runs at 2 AM UTC
+daily_schedule = ScheduleDefinition(
+    job=nasa_chlor_a_daily_pipeline,
+    cron_schedule="0 2 * * *",  # 2 AM daily
+    execution_timezone="UTC"
+)
+
+# Schedule for monthly summary
+monthly_schedule = ScheduleDefinition(
+    job=nasa_chlor_a_daily_pipeline,
+    cron_schedule="0 3 1 * *",  # 3 AM on 1st of each month
+    execution_timezone="UTC"
+)
