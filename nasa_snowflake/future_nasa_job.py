@@ -1,19 +1,42 @@
-# simple_nasa_pipeline.py
-from dagster import job, op, get_dagster_logger
+# working_pipeline.py
+from dagster import job, op, get_dagster_logger, Definitions, EnvVar
+from dagster import ConfigurableResource
 import pandas as pd
-import requests
 from datetime import datetime
+import snowflake.connector
 
 # ==========================
-# OPS بسيطة وواضحة
+# 1. Snowflake Resource - الطريقة الصحيحة
+# ==========================
+class SnowflakeResource(ConfigurableResource):
+    account: str = "KBZQPZO-WX06551"
+    user: str = "A7MEDESSO" 
+    password: str = "Ahmedesso@2005"
+    warehouse: str = "NASA_WH"
+    database: str = "NASA_DB" 
+    schema: str = "PUBLIC"
+    role: str = "ACCOUNTADMIN"
+
+    def get_connection(self):
+        return snowflake.connector.connect(
+            account=self.account,
+            user=self.user,
+            password=self.password,
+            warehouse=self.warehouse,
+            database=self.database,
+            schema=self.schema,
+            role=self.role
+        )
+
+# ==========================
+# 2. Ops بسيطة بدون تعقيد
 # ==========================
 @op
 def download_sample_data():
-    """تحميل بيانات نموذجية للاختبار"""
+    """تحميل بيانات نموذجية"""
     logger = get_dagster_logger()
     logger.info("📥 جاري تحميل بيانات نموذجية...")
     
-    # بيانات نموذجية بدلاً من NASA مباشرة (للتجنب المشاكل)
     sample_data = {
         'date': ['2022-01-01', '2022-01-02', '2022-01-03'],
         'latitude': [30.0, 30.5, 31.0],
@@ -51,18 +74,80 @@ def process_marine_data(df):
         axis=1
     )
     
-    logger.info(f"🎣 تم معالجة {len(df)} سجل - أفضل منطقة: {df['fishing_potential'].value_counts().to_dict()}")
+    logger.info(f"🎣 تم معالجة {len(df)} سجل")
     return df
 
 @op
-def analyze_results(df):
-    """تحليل النتائج وعمل تقرير"""
+def load_to_snowflake(df, snowflake: SnowflakeResource):
+    """تحميل البيانات إلى Snowflake"""
     logger = get_dagster_logger()
     
     if df.empty:
-        return "لا توجد بيانات للتحليل"
+        logger.info("⏭️ لا توجد بيانات للتحميل")
+        return "skipped"
     
-    # إحصائيات أساسية
+    conn = None
+    try:
+        conn = snowflake.get_connection()
+        cur = conn.cursor()
+        
+        # إنشاء الجدول إذا لم يكن موجوداً
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS marine_analysis_results (
+                date DATE,
+                latitude FLOAT,
+                longitude FLOAT,
+                chlorophyll FLOAT,
+                temperature FLOAT,
+                data_quality STRING,
+                fishing_potential STRING,
+                loaded_at TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
+            )
+        """)
+        
+        # تحضير البيانات للإدخال
+        data_to_insert = [
+            (
+                row["date"],
+                float(row["latitude"]),
+                float(row["longitude"]),
+                float(row["chlorophyll"]),
+                float(row["temperature"]),
+                row["data_quality"],
+                row["fishing_potential"]
+            )
+            for _, row in df.iterrows()
+        ]
+        
+        # إدخال البيانات
+        insert_query = """
+            INSERT INTO marine_analysis_results 
+            (date, latitude, longitude, chlorophyll, temperature, data_quality, fishing_potential)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+        """
+        
+        cur.executemany(insert_query, data_to_insert)
+        conn.commit()
+        
+        logger.info(f"✅ تم تحميل {len(df)} سجل إلى Snowflake بنجاح")
+        return f"success_{len(df)}_records"
+        
+    except Exception as e:
+        logger.error(f"❌ خطأ في التحميل إلى Snowflake: {e}")
+        return "failed"
+    finally:
+        if conn:
+            cur.close()
+            conn.close()
+
+@op
+def generate_report(df):
+    """إنشاء تقرير النتائج"""
+    logger = get_dagster_logger()
+    
+    if df.empty:
+        return "لا توجد بيانات للتقرير"
+    
     stats = {
         'total_records': len(df),
         'excellent_areas': len(df[df['fishing_potential'] == 'ممتاز']),
@@ -74,72 +159,32 @@ def analyze_results(df):
     
     logger.info(f"📊 التقرير: {stats}")
     
-    # أفضل 3 مناطق للصيد
-    best_spots = df[df['fishing_potential'] == 'ممتاز'][['latitude', 'longitude']].head(3)
-    logger.info(f"📍 أفضل مناطق الصيد: {best_spots.to_dict('records')}")
-    
     return stats
 
-@op
-def save_analysis_report(stats):
-    """حفظ التقرير (يمكن تعديله لحفظ في Snowflake لاحقاً)"""
-    logger = get_dagster_logger()
-    
-    logger.info("💾 حفظ التقرير...")
-    logger.info(f"✅ تم الانتهاء من التحليل: {stats}")
-    
-    return f"تم تحليل {stats['total_records']} منطقة - {stats['excellent_areas']} منطقة ممتازة للصيد"
-
 # ==========================
-# JOBS بسيطة بدون تعقيد
+# 3. Jobs - مع تعريف الResources
 # ==========================
 @job
-def marine_analysis_job():
-    """تحليل البيانات البحرية الأساسي"""
+def marine_analysis_with_snowflake():
+    """تحليل البيانات البحرية مع Snowflake"""
     data = download_sample_data()
     processed_data = process_marine_data(data)
-    analysis_results = analyze_results(processed_data)
-    save_analysis_report(analysis_results)
+    load_result = load_to_snowflake(processed_data)
+    report = generate_report(processed_data)
 
 @job
-def quick_test_job():
-    """تست سريع"""
-    logger = get_dagster_logger()
-    logger.info("🧪 بدء الاختبار السريع...")
-    
+def simple_analysis_only():
+    """تحليل بسيط بدون Snowflake"""
     data = download_sample_data()
-    results = analyze_results(data)
-    save_analysis_report(results)
+    processed_data = process_marine_data(data)
+    generate_report(processed_data)
 
 # ==========================
-# الإصدار مع بيانات حقيقية (لاحقاً)
+# 4. التعريفات النهائية - الجزء الأهم!
 # ==========================
-@op
-def get_real_nasa_data():
-    """جلب بيانات حقيقية من NASA (للتطوير المستقبلي)"""
-    logger = get_dagster_logger()
-    
-    try:
-        # هنا يمكن إضافة كود جلب البيانات الحقيقية لاحقاً
-        logger.info("🌍 جاري محاولة جلب بيانات NASA...")
-        
-        # بيانات نموذجية مؤقتاً
-        sample_real_data = {
-            'date': [datetime.now().date()],
-            'source': ['NASA_SIMULATION'],
-            'status': ['بيانات تجريبية - جاهز للبيانات الحقيقية']
-        }
-        
-        df = pd.DataFrame(sample_real_data)
-        return df
-        
-    except Exception as e:
-        logger.error(f"❌ خطأ في جلب البيانات: {e}")
-        return pd.DataFrame()
-
-@job
-def future_nasa_job():
-    """هذا الjob جاهز للبيانات الحقيقية مستقبلاً"""
-    real_data = get_real_nasa_data()
-    processed = process_marine_data(real_data)
-    analyze_results(processed)
+defs = Definitions(
+    jobs=[marine_analysis_with_snowflake, simple_analysis_only],
+    resources={
+        "snowflake": SnowflakeResource()  # هذا هو المفتاح!
+    }
+)
