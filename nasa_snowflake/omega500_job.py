@@ -39,30 +39,53 @@ def process_file_omega500(context, granule):
             return pd.DataFrame()
         
         # Check available pressure levels
-        if 'lev' in ds.coords:
-            pressure_levels = ds['lev'].values
-            context.log.info(f"Available pressure levels: {pressure_levels}")
-            
-            # Find 500 hPa level (50000 Pa)
-            target_level = 50000  # 500 hPa in Pa
-            available_levels = [lev for lev in pressure_levels if 49000 <= lev <= 51000]
-            
-            if available_levels:
-                closest_level = min(available_levels, key=lambda x: abs(x - target_level))
-                context.log.info(f"Selected pressure level: {closest_level} Pa for 500 hPa")
-                
-                # Select OMEGA data at 500 hPa level
-                ds_omega = ds[['OMEGA']].sel(lev=closest_level)
-                df = ds_omega.to_dataframe().reset_index()
-                
-            else:
-                context.log.warning("No pressure levels near 500 hPa found")
-                return pd.DataFrame()
-                
-        else:
-            context.log.warning("No pressure levels (lev coordinate) found in dataset")
+        pressure_coord = None
+        pressure_levels = None
+        
+        # Check different possible coordinate names for pressure
+        for coord_name in ['lev', 'plev', 'pressure', 'level']:
+            if coord_name in ds.coords:
+                pressure_coord = coord_name
+                pressure_levels = ds[coord_name].values
+                context.log.info(f"Found pressure coordinate '{coord_name}': {pressure_levels}")
+                break
+        
+        if pressure_levels is None:
+            context.log.warning("No pressure levels found in dataset")
             return pd.DataFrame()
         
+        # Find available pressure levels
+        target_level_pa = 50000  # 500 hPa in Pa
+        target_level_hpa = 500   # 500 hPa
+        
+        # Check if levels are in Pa or hPa
+        if pressure_levels.max() > 10000:  # Likely in Pa
+            available_levels = [lev for lev in pressure_levels if 30000 <= lev <= 70000]
+            context.log.info(f"Looking for levels near 50000 Pa. Available: {available_levels}")
+        else:  # Likely in hPa
+            available_levels = [lev for lev in pressure_levels if 300 <= lev <= 700]
+            context.log.info(f"Looking for levels near 500 hPa. Available: {available_levels}")
+        
+        if available_levels:
+            if pressure_levels.max() > 10000:  # Pa
+                closest_level = min(available_levels, key=lambda x: abs(x - target_level_pa))
+                context.log.info(f"Selected pressure level: {closest_level} Pa (closest to 500 hPa)")
+            else:  # hPa
+                closest_level = min(available_levels, key=lambda x: abs(x - target_level_hpa))
+                context.log.info(f"Selected pressure level: {closest_level} hPa (closest to 500 hPa)")
+            
+            # Select OMEGA data at the closest level
+            ds_omega = ds[['OMEGA']].sel({pressure_coord: closest_level})
+            df = ds_omega.to_dataframe().reset_index()
+            
+        else:
+            # If no levels near 500 hPa, use the highest available level
+            highest_level = pressure_levels.min() if pressure_levels.max() > 10000 else pressure_levels.max()
+            context.log.warning(f"No levels near 500 hPa found. Using highest level: {highest_level}")
+            
+            ds_omega = ds[['OMEGA']].sel({pressure_coord: highest_level})
+            df = ds_omega.to_dataframe().reset_index()
+                
         # Filter by bounding box
         df = df[
             (df.lat >= 30.8) & (df.lat <= 31.3) &
@@ -72,9 +95,6 @@ def process_file_omega500(context, granule):
         # Rename OMEGA to OMEGA500
         df = df.rename(columns={'OMEGA': VARIABLE})
         
-        # OMEGA is vertical velocity in Pa/s
-        # Positive values = downward motion, Negative values = upward motion
-        
         ds.close()
         context.log.info(f"Processed {len(df)} OMEGA500 data points")
         return df[["time", VARIABLE]]
@@ -83,6 +103,7 @@ def process_file_omega500(context, granule):
         context.log.error(f"Error processing OMEGA500 file: {e}")
         return pd.DataFrame()
 
+# باقي الكود بدون تغيير...
 @op(name="transform_daily_omega500")
 def transform_daily_omega500(context, df):
     if df.empty: 
