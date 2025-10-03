@@ -78,7 +78,7 @@ def search_nasa_files_tql_2022(context):
     results = earthaccess.search_data(
         short_name="M2T1NXSLV",
         version="5.12.4",
-        temporal=("2022-01-01", "2022-1-15"),
+        temporal=("2022-01-01", "2022-12-31"),
         bounding_box=(25.0, 22.0, 37.0, 32.0)
     )
     
