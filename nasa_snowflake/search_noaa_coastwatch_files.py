@@ -232,7 +232,7 @@ def load_daily_to_snowflake(df: pd.DataFrame, snowflake: SnowflakeResource):
             conn.close()
 
 # ==========================
-# DAGSTER JOBS - بدون أي for loops
+# DAGSTER JOBS - بدون return statements
 # ==========================
 @job
 def nasa_chlor_a_daily_pipeline():
@@ -252,15 +252,25 @@ def nasa_chlor_a_daily_pipeline():
 
 @job
 def nasa_chlor_a_test_pipeline():
-    """Test pipeline - بدون for loops"""
+    """Test pipeline - بدون return statements"""
     
-    # نفس الـ pattern باستخدام .map() فقط
+    # نفس الـ pattern باستخدام .map() فقط - بدون return
     files = search_nasa_chlor_a_2022()
     processed = files.map(process_chlor_a_stream)
     transformed = processed.map(transform_daily_data)
-    
-    # بدون for loop - استخدام .map() مباشرة
     transformed.map(load_daily_to_snowflake)
+    # لا يوجد return هنا!
+
+@job
+def nasa_chlor_a_simple_pipeline():
+    """Simple pipeline for quick testing"""
+    logger = get_dagster_logger()
+    logger.info("🚀 Starting simple NASA Chlorophyll pipeline...")
+    
+    # أبسط pipeline ممكن
+    files = search_nasa_chlor_a_2022()
+    processed = files.map(process_chlor_a_stream)
+    processed.map(transform_daily_data).map(load_daily_to_snowflake)
 
 # ==========================
 # SCHEDULED JOBS 
@@ -273,13 +283,8 @@ daily_schedule = ScheduleDefinition(
     execution_timezone="UTC"
 )
 
-# ==========================
-# DEFINITIONS FOR DAGSTER CLOUD
-# ==========================
-def get_definitions():
-    """Get all Dagster definitions for the project"""
-    return [
-        nasa_chlor_a_daily_pipeline,
-        nasa_chlor_a_test_pipeline,
-        daily_schedule
-    ]
+test_schedule = ScheduleDefinition(
+    job=nasa_chlor_a_test_pipeline, 
+    cron_schedule="0 12 * * *",
+    execution_timezone="UTC"
+)
