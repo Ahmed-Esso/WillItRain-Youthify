@@ -18,7 +18,7 @@ SNOWFLAKE_WAREHOUSE = "NASA_WH"
 SNOWFLAKE_DATABASE = "NASA_DB"
 SNOWFLAKE_SCHEMA = "PUBLIC"
 
-VARIABLES = ["TQL"]  # إجمالي عمود البخار المائي
+VARIABLES = ["DISPH"]  # ارتفاع طبقة الخلط
 
 # ==========================
 # Helper Function
@@ -47,25 +47,25 @@ def get_season(month):
     else:
         return "Autumn"
 
-def get_humidity_category(total_precipitable_water):
-    """تصنيف إجمالي البخار المائي"""
-    if total_precipitable_water < 10:
-        return "Very Dry"
-    elif total_precipitable_water < 20:
-        return "Dry"
-    elif total_precipitable_water < 30:
+def get_mixing_height_category(height):
+    """تصنيف ارتفاع طبقة الخلط"""
+    if height < 500:
+        return "Very Low"
+    elif height < 1000:
+        return "Low"
+    elif height < 1500:
         return "Moderate"
-    elif total_precipitable_water < 40:
-        return "Humid"
+    elif height < 2000:
+        return "High"
     else:
-        return "Very Humid"
+        return "Very High"
 
 # ==========================
-# DAGSTER OPS - DAILY AVERAGE FOR TQL
+# DAGSTER OPS - DAILY AVERAGE FOR DISPH
 # ==========================
 
 @op(out=DynamicOut())
-def search_nasa_files_tql_2022(context):
+def search_nasa_files_disph_2022(context):
     """
     بحث عن ملفات NASA لسنة 2022 كاملة لكل مصر
     """
@@ -74,7 +74,6 @@ def search_nasa_files_tql_2022(context):
     
     context.log.info("🔍 Searching for NASA files for 2022...")
     
-    # مصر كلها - حدود جغرافية شاملة
     results = earthaccess.search_data(
         short_name="M2T1NXSLV",
         version="5.12.4",
@@ -91,8 +90,8 @@ def search_nasa_files_tql_2022(context):
         )
 
 @op
-def process_single_file_tql(context, granule) -> pd.DataFrame:
-    """معالجة ملف واحد وحساب المتوسط اليومي لـ TQL"""
+def process_single_file_disph(context, granule) -> pd.DataFrame:
+    """معالجة ملف واحد وحساب المتوسط اليومي لـ DISPH"""
     try:
         context.log.info(f"📥 Streaming file: {granule['meta']['native-id']}")
         file_stream = earthaccess.open([granule])[0]
@@ -127,11 +126,11 @@ def process_single_file_tql(context, granule) -> pd.DataFrame:
         ds.close()
         
         if not all_daily_data:
-            context.log.warning(f"⚠️ No TQL variable found in file")
+            context.log.warning(f"⚠️ No DISPH variable found in file")
             return pd.DataFrame()
         
         combined = pd.concat(all_daily_data, ignore_index=True)
-        context.log.info(f"✅ Processed {len(combined)} daily TQL records from file")
+        context.log.info(f"✅ Processed {len(combined)} daily DISPH records from file")
         return combined
         
     except Exception as e:
@@ -139,12 +138,12 @@ def process_single_file_tql(context, granule) -> pd.DataFrame:
         return pd.DataFrame()
 
 @op
-def transform_daily_tql(context, df: pd.DataFrame) -> pd.DataFrame:
-    """تحويل البيانات اليومية لـ TQL"""
+def transform_daily_disph(context, df: pd.DataFrame) -> pd.DataFrame:
+    """تحويل البيانات اليومية لـ DISPH"""
     if df.empty:
         return df
     
-    context.log.info(f"🔄 Transforming {len(df)} daily TQL records...")
+    context.log.info(f"🔄 Transforming {len(df)} daily DISPH records...")
     
     required_cols = ["date", "variable", "lat", "lon"]
     missing_cols = [col for col in required_cols if col not in df.columns]
@@ -155,66 +154,66 @@ def transform_daily_tql(context, df: pd.DataFrame) -> pd.DataFrame:
     
     daily_summary = (
         df.groupby(["date", "variable"])
-        .agg({'TQL': 'mean', 'lat': 'count'})
+        .agg({'DISPH': 'mean', 'lat': 'count'})
         .reset_index()
     )
     
-    daily_summary.rename(columns={'TQL': 'avg_total_precipitable_water', 'lat': 'measurement_count'}, inplace=True)
+    daily_summary.rename(columns={'DISPH': 'avg_mixing_height', 'lat': 'measurement_count'}, inplace=True)
     daily_summary["year"] = pd.to_datetime(daily_summary["date"]).dt.year
     daily_summary["month"] = pd.to_datetime(daily_summary["date"]).dt.month
     daily_summary["day"] = pd.to_datetime(daily_summary["date"]).dt.day
     daily_summary["day_of_year"] = pd.to_datetime(daily_summary["date"]).dt.dayofyear
     daily_summary["day_name"] = pd.to_datetime(daily_summary["date"]).dt.day_name()
     daily_summary["season"] = daily_summary["month"].apply(get_season)
-    daily_summary["humidity_category"] = daily_summary["avg_total_precipitable_water"].apply(get_humidity_category)
+    daily_summary["mixing_height_category"] = daily_summary["avg_mixing_height"].apply(get_mixing_height_category)
     
     daily_stats = (
         df.groupby(["date"])
-        .agg({'TQL': ['max', 'min', 'std']})
+        .agg({'DISPH': ['max', 'min', 'std']})
         .reset_index()
     )
-    daily_stats.columns = ['date', 'max_total_precipitable_water', 'min_total_precipitable_water', 'tpw_std']
+    daily_stats.columns = ['date', 'max_mixing_height', 'min_mixing_height', 'height_std']
     
     final_result = pd.merge(daily_summary, daily_stats, on="date", how="left")
     
     result = final_result[[
         "date", "year", "month", "day", "day_of_year", "day_name", "season", "variable", 
-        "avg_total_precipitable_water", "max_total_precipitable_water", "min_total_precipitable_water", "tpw_std",
-        "humidity_category", "measurement_count"
+        "avg_mixing_height", "max_mixing_height", "min_mixing_height", "height_std",
+        "mixing_height_category", "measurement_count"
     ]]
     
-    context.log.info(f"✅ Transformed to {len(result)} daily TQL summary records for Egypt")
+    context.log.info(f"✅ Transformed to {len(result)} daily DISPH summary records for Egypt")
     return result
 
 @op
-def load_daily_tql_to_snowflake(context, df: pd.DataFrame):
-    """تحميل بيانات TQL لـ Snowflake"""
+def load_daily_disph_to_snowflake(context, df: pd.DataFrame):
+    """تحميل بيانات DISPH لـ Snowflake"""
     if df.empty:
         context.log.warning("⚠️ Empty dataframe - skipping load")
         return "skipped"
     
-    context.log.info(f"📤 Loading {len(df)} daily TQL records to Snowflake...")
+    context.log.info(f"📤 Loading {len(df)} daily DISPH records to Snowflake...")
     
     try:
         conn = get_snowflake_connection()
         cur = conn.cursor()
         
         cur.execute("""
-            CREATE TABLE IF NOT EXISTS NASA_DAILY_TOTAL_PRECIPITABLE_WATER (
+            CREATE TABLE IF NOT EXISTS NASA_DAILY_MIXING_HEIGHT (
                 date DATE, year INT, month INT, day INT, day_of_year INT,
                 day_name STRING, season STRING, variable STRING,
-                avg_total_precipitable_water FLOAT, max_total_precipitable_water FLOAT,
-                min_total_precipitable_water FLOAT, tpw_std FLOAT,
-                humidity_category STRING, measurement_count INT,
+                avg_mixing_height FLOAT, max_mixing_height FLOAT,
+                min_mixing_height FLOAT, height_std FLOAT,
+                mixing_height_category STRING, measurement_count INT,
                 loaded_at TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
             )
         """)
         
         insert_query = """
-            INSERT INTO NASA_DAILY_TOTAL_PRECIPITABLE_WATER 
+            INSERT INTO NASA_DAILY_MIXING_HEIGHT 
             (date, year, month, day, day_of_year, day_name, season, variable, 
-             avg_total_precipitable_water, max_total_precipitable_water, min_total_precipitable_water, tpw_std,
-             humidity_category, measurement_count) 
+             avg_mixing_height, max_mixing_height, min_mixing_height, height_std,
+             mixing_height_category, measurement_count) 
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
         
@@ -222,9 +221,9 @@ def load_daily_tql_to_snowflake(context, df: pd.DataFrame):
             (
                 row["date"], int(row["year"]), int(row["month"]), int(row["day"]), 
                 int(row["day_of_year"]), row["day_name"], row["season"], row["variable"], 
-                float(row["avg_total_precipitable_water"]), float(row["max_total_precipitable_water"]),
-                float(row["min_total_precipitable_water"]), float(row["tpw_std"]),
-                row["humidity_category"], int(row["measurement_count"])
+                float(row["avg_mixing_height"]), float(row["max_mixing_height"]),
+                float(row["min_mixing_height"]), float(row["height_std"]),
+                row["mixing_height_category"], int(row["measurement_count"])
             )
             for _, row in df.iterrows()
         ]
@@ -234,7 +233,7 @@ def load_daily_tql_to_snowflake(context, df: pd.DataFrame):
         cur.close()
         conn.close()
         
-        context.log.info(f"✅ Successfully loaded {len(df)} daily TQL records for Egypt")
+        context.log.info(f"✅ Successfully loaded {len(df)} daily DISPH records for Egypt")
         return "success"
         
     except Exception as e:
@@ -242,9 +241,9 @@ def load_daily_tql_to_snowflake(context, df: pd.DataFrame):
         raise
 
 @job
-def nasa_daily_total_precipitable_water_2022_pipeline():
-    """Pipeline لبيانات إجمالي عمود البخار المائي"""
-    files = search_nasa_files_tql_2022()
-    processed = files.map(process_single_file_tql)
-    transformed = processed.map(transform_daily_tql)
-    transformed.map(load_daily_tql_to_snowflake)
+def nasa_daily_mixing_height_2022_pipeline():
+    """Pipeline لبيانات ارتفاع طبقة الخلط"""
+    files = search_nasa_files_disph_2022()
+    processed = files.map(process_single_file_disph)
+    transformed = processed.map(transform_daily_disph)
+    transformed.map(load_daily_disph_to_snowflake)
