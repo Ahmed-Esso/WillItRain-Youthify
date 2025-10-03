@@ -12,8 +12,8 @@ DATASET = VARIABLE_TO_DATASET[VARIABLE]
 def get_snowflake_connection():
     return snowflake.connector.connect(**SNOWFLAKE_CONFIG)
 
-@op(out=DynamicOut())
-def search_files(context):
+@op(out=DynamicOut(), name="search_files_qv2m")  # اسم فريد
+def search_files_qv2m(context):
     auth = earthaccess.login(strategy="environment")
     results = earthaccess.search_data(
         short_name=DATASET,
@@ -23,8 +23,8 @@ def search_files(context):
     for i, g in enumerate(results):
         yield DynamicOutput(g, mapping_key=f"file_{i}")
 
-@op
-def process_file(context, granule):
+@op(name="process_file_qv2m")  # اسم فريد
+def process_file_qv2m(context, granule):
     try:
         stream = earthaccess.open([granule])[0]
         ds = xr.open_dataset(stream, engine="h5netcdf")
@@ -36,15 +36,15 @@ def process_file(context, granule):
             (df.lat >= 30.8) & (df.lat <= 31.3) &
             (df.lon >= 29.5) & (df.lon <= 31.5)
         ]
-        # QV2M doesn't need unit conversion like thermal variables
+        # QV2M doesn't need unit conversion
         ds.close()
         return df[["time", VARIABLE]]
     except Exception as e:
         context.log.error(f"Error: {e}")
         return pd.DataFrame()
 
-@op
-def transform_daily(context, df):
+@op(name="transform_daily_qv2m")  # اسم فريد
+def transform_daily_qv2m(context, df):
     if df.empty: 
         return pd.DataFrame()
     
@@ -52,17 +52,15 @@ def transform_daily(context, df):
     agg_dict = {VARIABLE: ["mean", "min", "max", "std", "count"]}
     result = df.groupby("date").agg(agg_dict).reset_index()
     
-    # إعادة تسمية الأعمدة بالترتيب الصحيح
     result.columns = ["date", "avg_value", "min_value", "max_value", "std_value", "measurement_count"]
     result["variable"] = VARIABLE
     
-    # إعادة ترتيب الأعمدة لتتناسب مع الجدول في Snowflake
     result = result[["date", "variable", "avg_value", "min_value", "max_value", "std_value", "measurement_count"]]
     
     return result
 
-@op
-def load_to_snowflake(context, df):
+@op(name="load_to_snowflake_qv2m")  # اسم فريد
+def load_to_snowflake_qv2m(context, df):
     if df.empty: 
         context.log.info("No data to load")
         return
@@ -71,7 +69,6 @@ def load_to_snowflake(context, df):
     conn = get_snowflake_connection()
     cur = conn.cursor()
     
-    # إنشاء الجدول إذا لم يكن موجوداً (أفضل من CREATE OR REPLACE للحفاظ على البيانات)
     cur.execute(f"""
         CREATE TABLE IF NOT EXISTS {table_name} (
             date DATE, 
@@ -85,10 +82,8 @@ def load_to_snowflake(context, df):
         )
     """)
     
-    # تحويل DataFrame إلى قائمة من الصفوف
     rows = [tuple(r) for r in df.values]
     
-    # استخدام استعلام INSERT مع تحديد الأعمدة بشكل صريح
     insert_query = f"""
         INSERT INTO {table_name} (date, variable, avg_value, min_value, max_value, std_value, measurement_count) 
         VALUES (%s, %s, %s, %s, %s, %s, %s)
@@ -108,7 +103,7 @@ def load_to_snowflake(context, df):
 
 @job
 def qv2m_job():
-    files = search_files()
-    processed = files.map(process_file)
-    transformed = processed.map(transform_daily)
-    transformed.map(load_to_snowflake)
+    files = search_files_qv2m()
+    processed = files.map(process_file_qv2m)
+    transformed = processed.map(transform_daily_qv2m)
+    transformed.map(load_to_snowflake_qv2m)
