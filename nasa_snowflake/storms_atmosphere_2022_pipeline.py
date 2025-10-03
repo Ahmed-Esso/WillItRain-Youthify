@@ -1,11 +1,11 @@
-# my_pipeline.py
+# my_pipeline_chlora.py
 import io
 import xarray as xr
 import pandas as pd
 import snowflake.connector
 from dagster import job, op, DynamicOut, DynamicOutput
 import earthaccess
-from datetime import datetime, timedelta
+from datetime import datetime
 
 # ==========================
 # Snowflake Config
@@ -35,23 +35,27 @@ def get_snowflake_connection():
     )
 
 # ==========================
+# VARIABLES: Chlorophyll-a only
+# ==========================
+VARIABLES = ["chlor_a"]
+
+# ==========================
 # SEARCH OP
 # ==========================
-
 @op(out=DynamicOut())
-def search_nasa_files_2022(context):
+def search_nasa_chlor_a_2022(context):
     context.log.info("🔍 Logging into NASA Earthdata...")
     auth = earthaccess.login(strategy="environment")
     
-    context.log.info("🔍 Searching for NASA files for 2022...")
+    context.log.info("🔍 Searching for MODIS Aqua Chlorophyll files for 2022...")
     results = earthaccess.search_data(
-        short_name="M2T1NXSLV",
-        version="5.12.4",
-        temporal=("2022-01-01", "2022-1-5"),
-        bounding_box=(25.0, 22.0, 37.0, 32.0)
+        short_name="MODISA_L3m_CHL",   # Chlorophyll MODIS Aqua L3
+        # version="2018.0",            # optional: بعض الداتا مش بتحتاج version
+        temporal=("2022-01-01", "2022-01-05"),
+        bounding_box=(25.0, 22.0, 37.0, 32.0)  # مصر / شرق المتوسط
     )
     
-    context.log.info(f"✅ Found {len(results)} files for 2022")
+    context.log.info(f"✅ Found {len(results)} chlor_a files for 2022")
     
     for idx, granule in enumerate(results):
         yield DynamicOutput(
@@ -60,47 +64,43 @@ def search_nasa_files_2022(context):
         )
 
 # ==========================
-# PRECIPITATION & CLOUD FRACTION PIPELINE ONLY
+# PROCESS Chlorophyll-a
 # ==========================
-
-VARIABLES = ["precipitation", "cloud_fraction"]
-
 @op
-def process_single_file(context, granule) -> pd.DataFrame:
+def process_single_chlor_a(context, granule) -> pd.DataFrame:
     try:
         context.log.info(f"📥 Streaming file: {granule['meta']['native-id']}")
         file_stream = earthaccess.open([granule])[0]
-        ds = xr.open_dataset(file_stream, engine="h5netcdf")
+        ds = xr.open_dataset(file_stream)
         
-        all_daily_data = []
+        if "chlor_a" not in ds.variables:
+            context.log.warning("⚠️ chlor_a not found in file")
+            return pd.DataFrame()
         
-        for var in VARIABLES:
-            if var in ds.variables:
-                df = ds[[var]].to_dataframe().reset_index()
-                
-                if "time" not in df.columns:
-                    continue
-                
-                df["time"] = pd.to_datetime(df["time"])
-                df["date"] = df["time"].dt.date
-                
-                daily_avg = df.groupby(["date", "lat", "lon"])[var].mean().reset_index()
-                daily_avg["variable"] = var
-                all_daily_data.append(daily_avg)
+        df = ds[["chlor_a"]].to_dataframe().reset_index()
+        
+        # بعض منتجات L3 مش بيبقى فيها time، فنعمل fallback
+        if "time" in df.columns:
+            df["time"] = pd.to_datetime(df["time"])
+            df["date"] = df["time"].dt.date
+        else:
+            df["date"] = datetime.utcnow().date()
+        
+        daily_avg = df.groupby(["date", "lat", "lon"])["chlor_a"].mean().reset_index()
+        daily_avg["variable"] = "chlor_a"
         
         ds.close()
         
-        if not all_daily_data:
-            return pd.DataFrame()
-        
-        combined = pd.concat(all_daily_data, ignore_index=True)
-        context.log.info(f"✅ Processed {len(combined)} records")
-        return combined
+        context.log.info(f"✅ Processed {len(daily_avg)} chlor_a records")
+        return daily_avg
         
     except Exception as e:
         context.log.error(f"❌ Error processing file: {e}")
         return pd.DataFrame()
 
+# ==========================
+# TRANSFORM Chlorophyll-a
+# ==========================
 @op
 def transform_daily_data(context, df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
@@ -108,11 +108,11 @@ def transform_daily_data(context, df: pd.DataFrame) -> pd.DataFrame:
     
     daily_summary = (
         df.groupby(["date", "variable"])
-        .agg({list(df.columns)[3]: 'mean', 'lat': 'count'})
+        .agg({"chlor_a": 'mean', 'lat': 'count'})
         .reset_index()
     )
     
-    daily_summary.rename(columns={list(df.columns)[3]: 'avg_value', 'lat': 'measurement_count'}, inplace=True)
+    daily_summary.rename(columns={"chlor_a": 'avg_value', 'lat': 'measurement_count'}, inplace=True)
     daily_summary["year"] = pd.to_datetime(daily_summary["date"]).dt.year
     daily_summary["month"] = pd.to_datetime(daily_summary["date"]).dt.month
     daily_summary["day"] = pd.to_datetime(daily_summary["date"]).dt.day
@@ -120,6 +120,9 @@ def transform_daily_data(context, df: pd.DataFrame) -> pd.DataFrame:
     result = daily_summary[["date", "year", "month", "day", "variable", "avg_value", "measurement_count"]]
     return result
 
+# ==========================
+# LOAD to Snowflake
+# ==========================
 @op
 def load_daily_to_snowflake(context, df: pd.DataFrame):
     if df.empty:
@@ -129,7 +132,7 @@ def load_daily_to_snowflake(context, df: pd.DataFrame):
     cur = conn.cursor()
     
     cur.execute("""
-        CREATE TABLE IF NOT EXISTS NASA_DAILY_PRECIP_CLOUD (
+        CREATE TABLE IF NOT EXISTS NASA_DAILY_CHLOR_A (
             date DATE, year INT, month INT, day INT,
             variable STRING, avg_value FLOAT, measurement_count INT,
             loaded_at TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
@@ -137,7 +140,7 @@ def load_daily_to_snowflake(context, df: pd.DataFrame):
     """)
     
     insert_query = """
-        INSERT INTO NASA_DAILY_PRECIP_CLOUD 
+        INSERT INTO NASA_DAILY_CHLOR_A 
         (date, year, month, day, variable, avg_value, measurement_count) 
         VALUES (%s, %s, %s, %s, %s, %s, %s)
     """
@@ -156,9 +159,12 @@ def load_daily_to_snowflake(context, df: pd.DataFrame):
     context.log.info(f"✅ Loaded {len(df)} records")
     return "success"
 
+# ==========================
+# DAGSTER JOB
+# ==========================
 @job
-def nasa_daily_precip_cloud_2022_pipeline():
-    files = search_nasa_files_2022()
-    processed = files.map(process_single_file)
+def nasa_daily_chlor_a_2022_pipeline():
+    files = search_nasa_chlor_a_2022()
+    processed = files.map(process_single_chlor_a)
     transformed = processed.map(transform_daily_data)
     transformed.map(load_daily_to_snowflake)
