@@ -9,22 +9,22 @@ from typing import List, Optional
 import os
 
 # ==========================
-# CONFIGURATION USING ENV VARS (Best practice for dagster.cloud)
+# CONFIGURATION USING ENV VARS (Fixed)
 # ==========================
 class SnowflakeResource(ConfigurableResource):
     """Snowflake configuration using environment variables"""
-    account: str = EnvVar("SNOWFLAKE_ACCOUNT")
-    user: str = EnvVar("SNOWFLAKE_USER") 
-    password: str = EnvVar("SNOWFLAKE_PASSWORD")
-    warehouse: str = EnvVar("SNOWFLAKE_WAREHOUSE", default="NASA_WH")
-    database: str = EnvVar("SNOWFLAKE_DATABASE", default="NASA_DB")
-    schema: str = EnvVar("SNOWFLAKE_SCHEMA", default="PUBLIC")
-    role: str = EnvVar("SNOWFLAKE_ROLE", default="ACCOUNTADMIN")
+    account: str
+    user: str 
+    password: str
+    warehouse: str = "NASA_WH"  # استخدام default value مباشرة
+    database: str = "NASA_DB"   # بدون EnvVar
+    schema: str = "PUBLIC"
+    role: str = "ACCOUNTADMIN"
 
 class EarthdataConfig(ConfigurableResource):
     """NASA Earthdata configuration"""
-    username: str = EnvVar("EARTHDATA_USERNAME")
-    password: str = EnvVar("EARTHDATA_PASSWORD")
+    username: str
+    password: str
 
 # ==========================
 # HELPER FUNCTIONS
@@ -45,7 +45,7 @@ def init_earthaccess():
 # DAGSTER OPS
 # ==========================
 @op(out=DynamicOut())
-def search_nasa_chlor_a_2022(earthdata_config: EarthdataConfig):
+def search_nasa_chlor_a_2022():
     """Search for MODIS Aqua Chlorophyll files"""
     logger = get_dagster_logger()
     
@@ -268,33 +268,20 @@ def nasa_chlor_a_daily_pipeline():
     # Load to Snowflake
     transformed.map(load_daily_to_snowflake)
 
+# ==========================
+# بديل أبسط إذا واجهت مشاكل مع ConfigurableResource
+# ==========================
 @job
-def nasa_chlor_a_test_pipeline():
-    """Test pipeline with limited data"""
+def simple_nasa_chlor_a_pipeline():
+    """Simple pipeline without complex configurations"""
     logger = get_dagster_logger()
-    logger.info("🧪 Running test pipeline...")
+    logger.info("🚀 Starting simple NASA Chlorophyll pipeline...")
     
-    # You can create a simplified version for testing
     files = search_nasa_chlor_a_2022()
     processed = files.map(process_chlor_a_stream)
-    first_result = processed.collect()[0] if processed else pd.DataFrame()
-    transform_daily_data(first_result)
-
-# ==========================
-# SCHEDULED JOBS (For dagster.cloud scheduler)
-# ==========================
-from dagster import ScheduleDefinition
-
-# Schedule for daily runs at 2 AM UTC
-daily_schedule = ScheduleDefinition(
-    job=nasa_chlor_a_daily_pipeline,
-    cron_schedule="0 2 * * *",  # 2 AM daily
-    execution_timezone="UTC"
-)
-
-# Schedule for monthly summary
-monthly_schedule = ScheduleDefinition(
-    job=nasa_chlor_a_daily_pipeline,
-    cron_schedule="0 3 1 * *",  # 3 AM on 1st of each month
-    execution_timezone="UTC"
-)
+    transformed = processed.map(transform_daily_data)
+    
+    # سنتعامل مع Snowflake بشكل منفصل في البداية
+    for df in transformed:
+        if not df.empty:
+            logger.info(f"📊 Processed {len(df)} records ready for Snowflake")
