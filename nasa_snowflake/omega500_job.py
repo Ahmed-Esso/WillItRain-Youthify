@@ -30,60 +30,55 @@ def process_file_omega500(context, granule):
         stream = earthaccess.open([granule])[0]
         ds = xr.open_dataset(stream, engine="h5netcdf")
         
-        # Debug: show all available variables
+        # Debug: show all available variables and levels
         available_vars = list(ds.data_vars.keys())
         context.log.info(f"Available variables in file: {available_vars}")
         
-        if VARIABLE not in ds:
-            context.log.warning(f"Variable {VARIABLE} not found. Available: {available_vars}")
-            
-            # Try common alternative names for omega
-            alternatives = ["OMEGA", "W", "VVEL", "VERTVEL"]
-            for alt_var in alternatives:
-                if alt_var in ds:
-                    context.log.info(f"Found alternative variable: {alt_var}")
-                    # Check if we need to filter by pressure level
-                    if 'lev' in ds.coords or 'plev' in ds.coords:
-                        # Find 500 hPa level
-                        pressure_levels = ds['lev'].values if 'lev' in ds.coords else ds['plev'].values
-                        context.log.info(f"Available pressure levels: {pressure_levels}")
-                        
-                        # Find closest level to 500 hPa (50000 Pa)
-                        target_level = 50000  # 500 hPa in Pa
-                        closest_level = min(pressure_levels, key=lambda x: abs(x - target_level))
-                        context.log.info(f"Using pressure level: {closest_level} Pa (closest to 500 hPa)")
-                        
-                        # Select data at this pressure level
-                        if 'lev' in ds.coords:
-                            ds_level = ds[[alt_var]].sel(lev=closest_level)
-                        else:
-                            ds_level = ds[[alt_var]].sel(plev=closest_level)
-                            
-                        df = ds_level.to_dataframe().reset_index()
-                    else:
-                        df = ds[[alt_var]].to_dataframe().reset_index()
-                    
-                    df = df[
-                        (df.lat >= 30.8) & (df.lat <= 31.3) &
-                        (df.lon >= 29.5) & (df.lon <= 31.5)
-                    ]
-                    ds.close()
-                    return df[["time", alt_var]].rename(columns={alt_var: VARIABLE})
-            
+        if 'OMEGA' not in ds:
+            context.log.warning(f"OMEGA variable not found. Available: {available_vars}")
             return pd.DataFrame()
         
-        # If OMEGA500 is found, process normally
-        df = ds[[VARIABLE]].to_dataframe().reset_index()
+        # Check available pressure levels
+        if 'lev' in ds.coords:
+            pressure_levels = ds['lev'].values
+            context.log.info(f"Available pressure levels: {pressure_levels}")
+            
+            # Find 500 hPa level (50000 Pa)
+            target_level = 50000  # 500 hPa in Pa
+            available_levels = [lev for lev in pressure_levels if 49000 <= lev <= 51000]
+            
+            if available_levels:
+                closest_level = min(available_levels, key=lambda x: abs(x - target_level))
+                context.log.info(f"Selected pressure level: {closest_level} Pa for 500 hPa")
+                
+                # Select OMEGA data at 500 hPa level
+                ds_omega = ds[['OMEGA']].sel(lev=closest_level)
+                df = ds_omega.to_dataframe().reset_index()
+                
+            else:
+                context.log.warning("No pressure levels near 500 hPa found")
+                return pd.DataFrame()
+                
+        else:
+            context.log.warning("No pressure levels (lev coordinate) found in dataset")
+            return pd.DataFrame()
+        
+        # Filter by bounding box
         df = df[
             (df.lat >= 30.8) & (df.lat <= 31.3) &
             (df.lon >= 29.5) & (df.lon <= 31.5)
         ]
         
-        # OMEGA is vertical velocity in Pa/s, usually no conversion needed
+        # Rename OMEGA to OMEGA500
+        df = df.rename(columns={'OMEGA': VARIABLE})
+        
+        # OMEGA is vertical velocity in Pa/s
         # Positive values = downward motion, Negative values = upward motion
         
         ds.close()
+        context.log.info(f"Processed {len(df)} OMEGA500 data points")
         return df[["time", VARIABLE]]
+        
     except Exception as e:
         context.log.error(f"Error processing OMEGA500 file: {e}")
         return pd.DataFrame()
