@@ -7,7 +7,7 @@ from dagster import job, op, DynamicOut, DynamicOutput
 from config import SNOWFLAKE_CONFIG, ALEX_BOUNDING_BOX, VARIABLE_TO_DATASET, THERMAL_VARS
 
 VARIABLE = "T2MWET"
-DATASET = VARIABLE_TO_DATASET[VARIABLE]
+DATASET = "M2T1NXSLV"
 
 def get_snowflake_connection():
     return snowflake.connector.connect(**SNOWFLAKE_CONFIG)
