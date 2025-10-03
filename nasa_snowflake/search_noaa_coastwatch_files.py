@@ -130,7 +130,7 @@ def search_oceancolor_chlor_a(context):
         period="MO",  # Monthly
         sensor="A",   # Aqua
         resolution=9, # 9km resolution
-        date_range=("2022-01-01", "2022-12-31")
+        date_range=("2022-01-01", "2022-1-15")
     )
     
     context.log.info(f"✅ Found {len(file_urls)} chlor_a files")
