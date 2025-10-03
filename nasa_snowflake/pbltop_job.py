@@ -6,7 +6,7 @@ import earthaccess
 from dagster import job, op, DynamicOut, DynamicOutput
 from config import SNOWFLAKE_CONFIG, ALEX_BOUNDING_BOX, VARIABLE_TO_DATASET, THERMAL_VARS
 
-VARIABLE = "PBLTOP"
+VARIABLE = "PBLH"  # غير من PBLTOP إلى PBLH
 DATASET = VARIABLE_TO_DATASET[VARIABLE]
 
 def get_snowflake_connection():
@@ -17,7 +17,7 @@ def search_files_pbltop(context):
     auth = earthaccess.login(strategy="environment")
     results = earthaccess.search_data(
         short_name=DATASET,
-        temporal=("2022-01-01", "2022-1-5"),
+        temporal=("2022-01-01", "2022-12-31"),
         bounding_box=ALEX_BOUNDING_BOX
     )
     context.log.info(f"Found {len(results)} files for {VARIABLE}")
@@ -37,8 +37,8 @@ def process_file_pbltop(context, granule):
         if VARIABLE not in ds:
             context.log.warning(f"Variable {VARIABLE} not found. Available: {available_vars}")
             
-            # Try common alternative names for PBL height/top
-            alternatives = ["PBLH", "HPBL", "PBL_HEIGHT", "BLH", "BOUNDARY_LAYER_HEIGHT", "PBL"]
+            # Try common alternative names for PBL height
+            alternatives = ["HPBL", "PBL_HEIGHT", "BLH", "BOUNDARY_LAYER_HEIGHT", "PBL"]
             for alt_var in alternatives:
                 if alt_var in ds:
                     context.log.info(f"Found alternative variable: {alt_var}")
@@ -49,29 +49,32 @@ def process_file_pbltop(context, granule):
                         (df.lon >= 29.5) & (df.lon <= 31.5)
                     ]
                     ds.close()
-                    return df[["time", alt_var]].rename(columns={alt_var: VARIABLE})
+                    return df[["time", alt_var]].rename(columns={alt_var: "PBLTOP"})  # احتفظ باسم PBLTOP للتخزين
             
             context.log.info("No PBL height variable found, returning empty DataFrame")
             return pd.DataFrame()
         
-        # If PBLTOP is found, process normally
+        # If PBLH is found, process normally
         df = ds[[VARIABLE]].to_dataframe().reset_index()
         df = df[
             (df.lat >= 30.8) & (df.lat <= 31.3) &
             (df.lon >= 29.5) & (df.lon <= 31.5)
         ]
         
-        # PBLTOP is planetary boundary layer top height, usually in meters
+        # PBLH is planetary boundary layer height, usually in meters
         # Check if unit conversion is needed (some models use Pa)
         if df[VARIABLE].max() > 10000:  # Likely in Pa
-            context.log.info("Converting PBLTOP from Pa to meters")
+            context.log.info("Converting PBLH from Pa to meters")
             # Approximate conversion using hypsometric equation
             surface_pressure = 101325  # Standard surface pressure in Pa
             df[VARIABLE] = ((surface_pressure - df[VARIABLE]) / 12.5)  # Rough conversion
         
+        # Rename to PBLTOP for storage
+        df = df.rename(columns={VARIABLE: "PBLTOP"})
+        
         ds.close()
         context.log.info(f"Processed {len(df)} PBLTOP data points")
-        return df[["time", VARIABLE]]
+        return df[["time", "PBLTOP"]]
         
     except Exception as e:
         context.log.error(f"Error processing PBLTOP file: {e}")
@@ -84,15 +87,15 @@ def transform_daily_pbltop(context, df):
         return pd.DataFrame()
     
     df["date"] = pd.to_datetime(df["time"]).dt.date
-    agg_dict = {VARIABLE: ["mean", "min", "max", "std", "count"]}
+    agg_dict = {"PBLTOP": ["mean", "min", "max", "std", "count"]}  # استخدم PBLTOP هنا
     result = df.groupby("date").agg(agg_dict).reset_index()
     
     result.columns = ["date", "avg_value", "min_value", "max_value", "std_value", "measurement_count"]
-    result["variable"] = VARIABLE
+    result["variable"] = "PBLTOP"  # استخدم PBLTOP هنا
     
     result = result[["date", "variable", "avg_value", "min_value", "max_value", "std_value", "measurement_count"]]
     
-    context.log.info(f"Transformed {len(result)} daily records for {VARIABLE}")
+    context.log.info(f"Transformed {len(result)} daily records for PBLTOP")
     return result
 
 @op(name="load_to_snowflake_pbltop")
@@ -101,7 +104,7 @@ def load_to_snowflake_pbltop(context, df):
         context.log.info("No PBLTOP data to load")
         return
     
-    table_name = f"NASA_{VARIABLE}_ALEX"
+    table_name = "NASA_PBLTOP_ALEX"  # استخدم PBLTOP هنا
     conn = get_snowflake_connection()
     cur = conn.cursor()
     
