@@ -120,4 +120,130 @@ def process_single_file_to3(context, granule) -> pd.DataFrame:
                 
                 df["date"] = df["time"].dt.date
                 daily_avg = df.groupby(["date", "lat", "lon"])[var].mean().reset_index()
-                daily_avg["
+                daily_avg["variable"] = var
+                all_daily_data.append(daily_avg)
+        
+        ds.close()
+        
+        if not all_daily_data:
+            context.log.warning(f"⚠️ No TO3 variable found in file")
+            return pd.DataFrame()
+        
+        combined = pd.concat(all_daily_data, ignore_index=True)
+        context.log.info(f"✅ Processed {len(combined)} daily TO3 records from file")
+        return combined
+        
+    except Exception as e:
+        context.log.error(f"❌ Error processing file: {e}")
+        return pd.DataFrame()
+
+@op
+def transform_daily_to3(context, df: pd.DataFrame) -> pd.DataFrame:
+    """تحويل البيانات اليومية لـ TO3"""
+    if df.empty:
+        return df
+    
+    context.log.info(f"🔄 Transforming {len(df)} daily TO3 records...")
+    
+    required_cols = ["date", "variable", "lat", "lon"]
+    missing_cols = [col for col in required_cols if col not in df.columns]
+    
+    if missing_cols:
+        context.log.warning(f"⚠️ Missing columns: {missing_cols}")
+        return pd.DataFrame()
+    
+    daily_summary = (
+        df.groupby(["date", "variable"])
+        .agg({'TO3': 'mean', 'lat': 'count'})
+        .reset_index()
+    )
+    
+    daily_summary.rename(columns={'TO3': 'avg_surface_ozone', 'lat': 'measurement_count'}, inplace=True)
+    daily_summary["year"] = pd.to_datetime(daily_summary["date"]).dt.year
+    daily_summary["month"] = pd.to_datetime(daily_summary["date"]).dt.month
+    daily_summary["day"] = pd.to_datetime(daily_summary["date"]).dt.day
+    daily_summary["day_of_year"] = pd.to_datetime(daily_summary["date"]).dt.dayofyear
+    daily_summary["day_name"] = pd.to_datetime(daily_summary["date"]).dt.day_name()
+    daily_summary["season"] = daily_summary["month"].apply(get_season)
+    daily_summary["ozone_category"] = daily_summary["avg_surface_ozone"].apply(get_surface_ozone_category)
+    
+    daily_stats = (
+        df.groupby(["date"])
+        .agg({'TO3': ['max', 'min', 'std']})
+        .reset_index()
+    )
+    daily_stats.columns = ['date', 'max_surface_ozone', 'min_surface_ozone', 'ozone_std']
+    
+    final_result = pd.merge(daily_summary, daily_stats, on="date", how="left")
+    
+    result = final_result[[
+        "date", "year", "month", "day", "day_of_year", "day_name", "season", "variable", 
+        "avg_surface_ozone", "max_surface_ozone", "min_surface_ozone", "ozone_std",
+        "ozone_category", "measurement_count"
+    ]]
+    
+    context.log.info(f"✅ Transformed to {len(result)} daily TO3 summary records for Egypt")
+    return result
+
+@op
+def load_daily_to3_to_snowflake(context, df: pd.DataFrame):
+    """تحميل بيانات TO3 لـ Snowflake"""
+    if df.empty:
+        context.log.warning("⚠️ Empty dataframe - skipping load")
+        return "skipped"
+    
+    context.log.info(f"📤 Loading {len(df)} daily TO3 records to Snowflake...")
+    
+    try:
+        conn = get_snowflake_connection()
+        cur = conn.cursor()
+        
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS NASA_DAILY_SURFACE_OZONE (
+                date DATE, year INT, month INT, day INT, day_of_year INT,
+                day_name STRING, season STRING, variable STRING,
+                avg_surface_ozone FLOAT, max_surface_ozone FLOAT,
+                min_surface_ozone FLOAT, ozone_std FLOAT,
+                ozone_category STRING, measurement_count INT,
+                loaded_at TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
+            )
+        """)
+        
+        insert_query = """
+            INSERT INTO NASA_DAILY_SURFACE_OZONE 
+            (date, year, month, day, day_of_year, day_name, season, variable, 
+             avg_surface_ozone, max_surface_ozone, min_surface_ozone, ozone_std,
+             ozone_category, measurement_count) 
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """
+        
+        data_to_insert = [
+            (
+                row["date"], int(row["year"]), int(row["month"]), int(row["day"]), 
+                int(row["day_of_year"]), row["day_name"], row["season"], row["variable"], 
+                float(row["avg_surface_ozone"]), float(row["max_surface_ozone"]),
+                float(row["min_surface_ozone"]), float(row["ozone_std"]),
+                row["ozone_category"], int(row["measurement_count"])
+            )
+            for _, row in df.iterrows()
+        ]
+        
+        cur.executemany(insert_query, data_to_insert)
+        conn.commit()
+        cur.close()
+        conn.close()
+        
+        context.log.info(f"✅ Successfully loaded {len(df)} daily TO3 records for Egypt")
+        return "success"
+        
+    except Exception as e:
+        context.log.error(f"❌ Error loading to Snowflake: {e}")
+        raise
+
+@job
+def nasa_daily_surface_ozone_2022_pipeline():
+    """Pipeline لبيانات تركيز الأوزون السطحي"""
+    files = search_nasa_files_to3_2022()
+    processed = files.map(process_single_file_to3)
+    transformed = processed.map(transform_daily_to3)
+    transformed.map(load_daily_to3_to_snowflake)
