@@ -17,7 +17,7 @@ def search_files(context):
     auth = earthaccess.login(strategy="environment")
     results = earthaccess.search_data(
         short_name=DATASET,
-        temporal=("2022-01-01", "2022-1-7"),
+        temporal=("2022-01-01", "2022-12-31"),
         bounding_box=ALEX_BOUNDING_BOX
     )
     for i, g in enumerate(results):
@@ -29,7 +29,6 @@ def process_file(context, granule):
         stream = earthaccess.open([granule])[0]
         ds = xr.open_dataset(stream, engine="h5netcdf")
         if VARIABLE not in ds:
-            context.log.warning(f"Variable {VARIABLE} not found in dataset")
             return pd.DataFrame()
         
         df = ds[[VARIABLE]].to_dataframe().reset_index()
@@ -37,20 +36,16 @@ def process_file(context, granule):
             (df.lat >= 30.8) & (df.lat <= 31.3) &
             (df.lon >= 29.5) & (df.lon <= 31.5)
         ]
-        
-        # QV2M هو الرطوبة النوعية (kg/kg) - لا يحتاج لتحويل وحدة مثل درجة الحرارة
-        # يمكن تحويله لنسبة مئوية إذا كان مطلوباً: df[VARIABLE] = df[VARIABLE] * 100
-        
+        # QV2M doesn't need unit conversion like thermal variables
         ds.close()
         return df[["time", VARIABLE]]
     except Exception as e:
-        context.log.error(f"Error processing file: {e}")
+        context.log.error(f"Error: {e}")
         return pd.DataFrame()
 
 @op
 def transform_daily(context, df):
     if df.empty: 
-        context.log.info("No data to transform")
         return pd.DataFrame()
     
     df["date"] = pd.to_datetime(df["time"]).dt.date
@@ -64,12 +59,6 @@ def transform_daily(context, df):
     # إعادة ترتيب الأعمدة لتتناسب مع الجدول في Snowflake
     result = result[["date", "variable", "avg_value", "min_value", "max_value", "std_value", "measurement_count"]]
     
-    # تقريب القيم العشرية إذا لزم الأمر
-    numeric_columns = ["avg_value", "min_value", "max_value", "std_value"]
-    for col in numeric_columns:
-        result[col] = result[col].round(6)  # تقريب لـ 6 منازل عشرية
-    
-    context.log.info(f"Transformed {len(result)} daily records for {VARIABLE}")
     return result
 
 @op
@@ -82,7 +71,7 @@ def load_to_snowflake(context, df):
     conn = get_snowflake_connection()
     cur = conn.cursor()
     
-    # إنشاء الجدول إذا لم يكن موجوداً
+    # إنشاء الجدول إذا لم يكن موجوداً (أفضل من CREATE OR REPLACE للحفاظ على البيانات)
     cur.execute(f"""
         CREATE TABLE IF NOT EXISTS {table_name} (
             date DATE, 
@@ -109,12 +98,6 @@ def load_to_snowflake(context, df):
         cur.executemany(insert_query, rows)
         conn.commit()
         context.log.info(f"Successfully loaded {len(rows)} rows into {table_name}")
-        
-        # التحقق من البيانات المدرجة
-        cur.execute(f"SELECT COUNT(*) FROM {table_name} WHERE variable = %s", (VARIABLE,))
-        count = cur.fetchone()[0]
-        context.log.info(f"Total records for {VARIABLE} in table: {count}")
-        
     except Exception as e:
         context.log.error(f"Error loading data to Snowflake: {e}")
         conn.rollback()
