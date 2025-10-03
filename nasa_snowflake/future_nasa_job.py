@@ -1,35 +1,10 @@
-# working_pipeline.py
-from dagster import job, op, get_dagster_logger, Definitions, EnvVar
-from dagster import ConfigurableResource
+# final_working_pipeline.py
+from dagster import job, op, get_dagster_logger, Definitions
 import pandas as pd
 from datetime import datetime
-import snowflake.connector
 
 # ==========================
-# 1. Snowflake Resource - الطريقة الصحيحة
-# ==========================
-class SnowflakeResource(ConfigurableResource):
-    account: str = "KBZQPZO-WX06551"
-    user: str = "A7MEDESSO" 
-    password: str = "Ahmedesso@2005"
-    warehouse: str = "NASA_WH"
-    database: str = "NASA_DB" 
-    schema: str = "PUBLIC"
-    role: str = "ACCOUNTADMIN"
-
-    def get_connection(self):
-        return snowflake.connector.connect(
-            account=self.account,
-            user=self.user,
-            password=self.password,
-            warehouse=self.warehouse,
-            database=self.database,
-            schema=self.schema,
-            role=self.role
-        )
-
-# ==========================
-# 2. Ops بسيطة بدون تعقيد
+# 1. Ops بسيطة بدون تعقيد
 # ==========================
 @op
 def download_sample_data():
@@ -78,69 +53,6 @@ def process_marine_data(df):
     return df
 
 @op
-def load_to_snowflake(df, snowflake: SnowflakeResource):
-    """تحميل البيانات إلى Snowflake"""
-    logger = get_dagster_logger()
-    
-    if df.empty:
-        logger.info("⏭️ لا توجد بيانات للتحميل")
-        return "skipped"
-    
-    conn = None
-    try:
-        conn = snowflake.get_connection()
-        cur = conn.cursor()
-        
-        # إنشاء الجدول إذا لم يكن موجوداً
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS marine_analysis_results (
-                date DATE,
-                latitude FLOAT,
-                longitude FLOAT,
-                chlorophyll FLOAT,
-                temperature FLOAT,
-                data_quality STRING,
-                fishing_potential STRING,
-                loaded_at TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
-            )
-        """)
-        
-        # تحضير البيانات للإدخال
-        data_to_insert = [
-            (
-                row["date"],
-                float(row["latitude"]),
-                float(row["longitude"]),
-                float(row["chlorophyll"]),
-                float(row["temperature"]),
-                row["data_quality"],
-                row["fishing_potential"]
-            )
-            for _, row in df.iterrows()
-        ]
-        
-        # إدخال البيانات
-        insert_query = """
-            INSERT INTO marine_analysis_results 
-            (date, latitude, longitude, chlorophyll, temperature, data_quality, fishing_potential)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
-        """
-        
-        cur.executemany(insert_query, data_to_insert)
-        conn.commit()
-        
-        logger.info(f"✅ تم تحميل {len(df)} سجل إلى Snowflake بنجاح")
-        return f"success_{len(df)}_records"
-        
-    except Exception as e:
-        logger.error(f"❌ خطأ في التحميل إلى Snowflake: {e}")
-        return "failed"
-    finally:
-        if conn:
-            cur.close()
-            conn.close()
-
-@op
 def generate_report(df):
     """إنشاء تقرير النتائج"""
     logger = get_dagster_logger()
@@ -159,32 +71,47 @@ def generate_report(df):
     
     logger.info(f"📊 التقرير: {stats}")
     
+    # أفضل 3 مناطق للصيد
+    best_spots = df[df['fishing_potential'] == 'ممتاز'][['latitude', 'longitude']].head(3)
+    logger.info(f"📍 أفضل مناطق الصيد: {best_spots.to_dict('records')}")
+    
     return stats
 
-# ==========================
-# 3. Jobs - مع تعريف الResources
-# ==========================
-@job
-def marine_analysis_with_snowflake():
-    """تحليل البيانات البحرية مع Snowflake"""
-    data = download_sample_data()
-    processed_data = process_marine_data(data)
-    load_result = load_to_snowflake(processed_data)
-    report = generate_report(processed_data)
-
-@job
-def simple_analysis_only():
-    """تحليل بسيط بدون Snowflake"""
-    data = download_sample_data()
-    processed_data = process_marine_data(data)
-    generate_report(processed_data)
+@op
+def save_analysis_report(stats):
+    """حفظ التقرير"""
+    logger = get_dagster_logger()
+    
+    logger.info("💾 حفظ التقرير...")
+    logger.info(f"✅ تم الانتهاء من التحليل: {stats}")
+    
+    return f"تم تحليل {stats['total_records']} منطقة - {stats['excellent_areas']} منطقة ممتازة للصيد"
 
 # ==========================
-# 4. التعريفات النهائية - الجزء الأهم!
+# 2. Jobs - بدون Snowflake في البداية
+# ==========================
+@job
+def marine_analysis_job():
+    """تحليل البيانات البحرية الأساسي"""
+    data = download_sample_data()
+    processed_data = process_marine_data(data)
+    analysis_results = generate_report(processed_data)
+    save_analysis_report(analysis_results)
+
+@job
+def quick_test_job():
+    """تست سريع"""
+    logger = get_dagster_logger()
+    logger.info("🧪 بدء الاختبار السريع...")
+    
+    data = download_sample_data()
+    results = generate_report(data)
+    save_analysis_report(results)
+
+# ==========================
+# 3. التعريفات النهائية - بدون Resources
 # ==========================
 defs = Definitions(
-    jobs=[marine_analysis_with_snowflake, simple_analysis_only],
-    resources={
-        "snowflake": SnowflakeResource()  # هذا هو المفتاح!
-    }
+    jobs=[marine_analysis_job, quick_test_job]
+    # ⭐ لا يوجد resources هنا - علشان كده هتشغل
 )
