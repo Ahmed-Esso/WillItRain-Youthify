@@ -124,11 +124,6 @@ def transform_daily_data(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return df
     
-    # Calculate daily statistics per location
-    daily_stats = df.groupby(["date", "lat", "lon"]).agg({
-        "chlor_a": "mean"
-    }).reset_index()
-    
     # Calculate overall daily summary
     daily_summary = df.groupby(["date", "variable"]).agg({
         "chlor_a": ["mean", "count", "std"],
@@ -237,7 +232,7 @@ def load_daily_to_snowflake(df: pd.DataFrame, snowflake: SnowflakeResource):
             conn.close()
 
 # ==========================
-# DAGSTER JOBS - الطريقة الصحيحة للتعامل مع Dynamic Outputs
+# DAGSTER JOBS - بدون أي for loops
 # ==========================
 @job
 def nasa_chlor_a_daily_pipeline():
@@ -246,28 +241,26 @@ def nasa_chlor_a_daily_pipeline():
     # Search for files → Dynamic Output
     files = search_nasa_chlor_a_2022()
     
-    # Process each file → استخدم .map() للتعامل مع Dynamic Output
+    # Process each file → استخدم .map() فقط
     processed = files.map(process_chlor_a_stream)
     
-    # Transform data → استخدم .map() مرة أخرى
+    # Transform data → استخدم .map() فقط  
     transformed = processed.map(transform_daily_data)
     
-    # Load to Snowflake → استخدم .map() للتحميل المتوازي
+    # Load to Snowflake → استخدم .map() فقط
     transformed.map(load_daily_to_snowflake)
 
 @job
 def nasa_chlor_a_test_pipeline():
-    """Test pipeline with simple flow"""
-    logger = get_dagster_logger()
-    logger.info("🧪 Starting test pipeline...")
+    """Test pipeline - بدون for loops"""
     
-    # نفس الـ pattern باستخدام .map()
+    # نفس الـ pattern باستخدام .map() فقط
     files = search_nasa_chlor_a_2022()
     processed = files.map(process_chlor_a_stream)
     transformed = processed.map(transform_daily_data)
-    results = transformed.map(load_daily_to_snowflake)
     
-    return results
+    # بدون for loop - استخدام .map() مباشرة
+    transformed.map(load_daily_to_snowflake)
 
 # ==========================
 # SCHEDULED JOBS 
