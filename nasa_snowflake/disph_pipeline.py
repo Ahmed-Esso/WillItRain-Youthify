@@ -139,50 +139,48 @@ def process_single_file_disph(context, granule) -> pd.DataFrame:
 
 @op
 def transform_daily_disph(context, df: pd.DataFrame) -> pd.DataFrame:
-    """تحويل البيانات اليومية لـ DISPH"""
+    """تحويل البيانات اليومية لـ DISPH (نسخة مصححة)"""
     if df.empty:
         return df
     
-    context.log.info(f"🔄 Transforming {len(df)} daily DISPH records...")
+    context.log.info(f"🔄 Transforming {len(df)} DISPH records...")
     
-    required_cols = ["date", "variable", "lat", "lon"]
-    missing_cols = [col for col in required_cols if col not in df.columns]
+    # 1. حساب المتوسط اليومي لكل نقطة جغرافية
+    df["date"] = pd.to_datetime(df["time"]).dt.date
+    daily_per_location = df.groupby(["date", "lat", "lon"])["DISPH"].mean().reset_index()
     
-    if missing_cols:
-        context.log.warning(f"⚠️ Missing columns: {missing_cols}")
-        return pd.DataFrame()
-    
-    daily_summary = (
-        df.groupby(["date", "variable"])
-        .agg({'DISPH': 'mean', 'lat': 'count'})
+    # 2. حساب المتوسط الإقليمي اليومي من متوسطات النقاط
+    regional_daily = (
+        daily_per_location
+        .groupby("date")
+        .agg(
+            avg_mixing_height=("DISPH", "mean"),
+            max_mixing_height=("DISPH", "max"),
+            min_mixing_height=("DISPH", "min"),
+            height_std=("DISPH", "std"),
+            measurement_count=("lat", "count")  # ✅ دلوقتي ده عدد النقاط الجغرافية!
+        )
         .reset_index()
     )
     
-    daily_summary.rename(columns={'DISPH': 'avg_mixing_height', 'lat': 'measurement_count'}, inplace=True)
-    daily_summary["year"] = pd.to_datetime(daily_summary["date"]).dt.year
-    daily_summary["month"] = pd.to_datetime(daily_summary["date"]).dt.month
-    daily_summary["day"] = pd.to_datetime(daily_summary["date"]).dt.day
-    daily_summary["day_of_year"] = pd.to_datetime(daily_summary["date"]).dt.dayofyear
-    daily_summary["day_name"] = pd.to_datetime(daily_summary["date"]).dt.day_name()
-    daily_summary["season"] = daily_summary["month"].apply(get_season)
-    daily_summary["mixing_height_category"] = daily_summary["avg_mixing_height"].apply(get_mixing_height_category)
+    # 3. إضافة معلومات التاريخ والفصل
+    regional_daily["year"] = pd.to_datetime(regional_daily["date"]).dt.year
+    regional_daily["month"] = pd.to_datetime(regional_daily["date"]).dt.month
+    regional_daily["day"] = pd.to_datetime(regional_daily["date"]).dt.day
+    regional_daily["day_of_year"] = pd.to_datetime(regional_daily["date"]).dt.dayofyear
+    regional_daily["day_name"] = pd.to_datetime(regional_daily["date"]).dt.day_name()
+    regional_daily["season"] = regional_daily["month"].apply(get_season)
+    regional_daily["variable"] = "mixing_height"
+    regional_daily["mixing_height_category"] = regional_daily["avg_mixing_height"].apply(get_mixing_height_category)
     
-    daily_stats = (
-        df.groupby(["date"])
-        .agg({'DISPH': ['max', 'min', 'std']})
-        .reset_index()
-    )
-    daily_stats.columns = ['date', 'max_mixing_height', 'min_mixing_height', 'height_std']
-    
-    final_result = pd.merge(daily_summary, daily_stats, on="date", how="left")
-    
-    result = final_result[[
+    # 4. ترتيب الأعمدة
+    result = regional_daily[[
         "date", "year", "month", "day", "day_of_year", "day_name", "season", "variable", 
         "avg_mixing_height", "max_mixing_height", "min_mixing_height", "height_std",
         "mixing_height_category", "measurement_count"
     ]]
     
-    context.log.info(f"✅ Transformed to {len(result)} daily DISPH summary records for Egypt")
+    context.log.info(f"✅ Transformed to {len(result)} daily records (avg of {regional_daily['measurement_count'].mean():.0f} grid points)")
     return result
 
 @op
