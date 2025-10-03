@@ -4,10 +4,10 @@ import snowflake.connector
 import xarray as xr
 import earthaccess
 from dagster import job, op, DynamicOut, DynamicOutput
-from config import SNOWFLAKE_CONFIG, ALEX_BOUNDING_BOX, VARIABLE_TO_DATASET
+from config import SNOWFLAKE_CONFIG, ALEX_BOUNDING_BOX
 
 VARIABLE = "TQI"
-DATASET = VARIABLE_TO_DATASET[VARIABLE]
+DATASET = "M2T3NVCHM"  # ✅ المجموعة الصحيحة لـ TQI في MERRA-2
 
 def get_snowflake_connection():
     return snowflake.connector.connect(**SNOWFLAKE_CONFIG)
@@ -81,7 +81,6 @@ def load_tqi_to_snowflake(context, df: pd.DataFrame):
     conn = get_snowflake_connection()
     cur = conn.cursor()
     
-    # إنشاء الجدول
     cur.execute(f"""
         CREATE OR REPLACE TABLE {table_name} (
             date DATE,
@@ -95,7 +94,6 @@ def load_tqi_to_snowflake(context, df: pd.DataFrame):
         )
     """)
     
-    # ✅ ترتيب البيانات حسب أعمدة الجدول
     rows = []
     for _, row in df.iterrows():
         rows.append((
