@@ -18,7 +18,7 @@ def search_files(context):
     auth = earthaccess.login(strategy="environment")
     results = earthaccess.search_data(
         short_name=DATASET,
-        temporal=("2022-01-01", "2022-12-31"),
+        temporal=("2022-01-01", "2022-01-07"),
         bounding_box=ALEX_BOUNDING_BOX
     )
     for i, granule in enumerate(results):
