@@ -46,34 +46,66 @@ def process_file(context, granule):
 
 @op
 def transform_daily(context, df):
-    if df.empty: return pd.DataFrame()
+    if df.empty: 
+        return pd.DataFrame()
+    
     df["date"] = pd.to_datetime(df["time"]).dt.date
     agg_dict = {VARIABLE: ["mean", "min", "max", "std", "count"]}
     result = df.groupby("date").agg(agg_dict).reset_index()
+    
+    # إعادة تسمية الأعمدة بالترتيب الصحيح
     result.columns = ["date", "avg_value", "min_value", "max_value", "std_value", "measurement_count"]
     result["variable"] = VARIABLE
+    
+    # إعادة ترتيب الأعمدة لتتناسب مع الجدول في Snowflake
+    result = result[["date", "variable", "avg_value", "min_value", "max_value", "std_value", "measurement_count"]]
+    
     return result
 
 @op
 def load_to_snowflake(context, df):
-    if df.empty: return
+    if df.empty: 
+        context.log.info("No data to load")
+        return
+    
     table_name = f"NASA_{VARIABLE}_ALEX"
     conn = get_snowflake_connection()
     cur = conn.cursor()
+    
+    # إنشاء الجدول إذا لم يكن موجوداً (أفضل من CREATE OR REPLACE للحفاظ على البيانات)
     cur.execute(f"""
-        CREATE OR REPLACE TABLE {table_name} (
-            date DATE, variable STRING, avg_value FLOAT, min_value FLOAT,
-            max_value FLOAT, std_value FLOAT, measurement_count INT,
+        CREATE TABLE IF NOT EXISTS {table_name} (
+            date DATE, 
+            variable STRING, 
+            avg_value FLOAT, 
+            min_value FLOAT,
+            max_value FLOAT, 
+            std_value FLOAT, 
+            measurement_count INT,
             loaded_at TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
         )
     """)
+    
+    # تحويل DataFrame إلى قائمة من الصفوف
     rows = [tuple(r) for r in df.values]
-    cur.executemany(
-        f"INSERT INTO {table_name} VALUES (%s, %s, %s, %s, %s, %s, %s, DEFAULT)",
-        rows
-    )
-    conn.commit()
-    cur.close()
+    
+    # استخدام استعلام INSERT مع تحديد الأعمدة بشكل صريح
+    insert_query = f"""
+        INSERT INTO {table_name} (date, variable, avg_value, min_value, max_value, std_value, measurement_count) 
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
+    """
+    
+    try:
+        cur.executemany(insert_query, rows)
+        conn.commit()
+        context.log.info(f"Successfully loaded {len(rows)} rows into {table_name}")
+    except Exception as e:
+        context.log.error(f"Error loading data to Snowflake: {e}")
+        conn.rollback()
+        raise e
+    finally:
+        cur.close()
+        conn.close()
 
 @job
 def t2m_job():
