@@ -63,49 +63,52 @@ def transform_daily(context, df):
     return result
 
 @op
-def load_to_snowflake(context, df):
-    if df.empty: 
-        context.log.info("No data to load")
+def load_to_snowflake(context, df: pd.DataFrame):
+    """تحميل البيانات لـ Snowflake"""
+    if df.empty:
         return
     
     table_name = f"NASA_{VARIABLE}_ALEX"
     conn = get_snowflake_connection()
     cur = conn.cursor()
     
-    # إنشاء الجدول إذا لم يكن موجوداً (أفضل من CREATE OR REPLACE للحفاظ على البيانات)
+    # إنشاء الجدول (نفس الكود)
     cur.execute(f"""
-        CREATE TABLE IF NOT EXISTS {table_name} (
-            date DATE, 
-            variable STRING, 
-            avg_value FLOAT, 
+        CREATE OR REPLACE TABLE {table_name} (
+            date DATE,
+            variable STRING,
+            avg_value FLOAT,
             min_value FLOAT,
-            max_value FLOAT, 
-            std_value FLOAT, 
+            max_value FLOAT,
+            std_value FLOAT,
             measurement_count INT,
             loaded_at TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
         )
     """)
     
-    # تحويل DataFrame إلى قائمة من الصفوف
-    rows = [tuple(r) for r in df.values]
+    # ⚠️ المشكلة هنا: ترتيب البيانات لازم يطابق أعمدة الجدول
+    # الجدول: date, variable, avg_value, min_value, max_value, std_value, measurement_count
+    rows = []
+    for _, row in df.iterrows():
+        rows.append((
+            row["date"],
+            row["variable"],          # STRING
+            float(row["avg_value"]),
+            float(row["min_value"]),
+            float(row["max_value"]),
+            float(row["std_value"]),
+            int(row["measurement_count"])  # INT (مش نص!)
+        ))
     
-    # استخدام استعلام INSERT مع تحديد الأعمدة بشكل صريح
-    insert_query = f"""
-        INSERT INTO {table_name} (date, variable, avg_value, min_value, max_value, std_value, measurement_count) 
-        VALUES (%s, %s, %s, %s, %s, %s, %s)
-    """
+    # استخدم INSERT مع تحديد أسماء الأعمدة صراحةً (الأفضل)
+    cur.executemany(
+        f"INSERT INTO {table_name} (date, variable, avg_value, min_value, max_value, std_value, measurement_count) VALUES (%s, %s, %s, %s, %s, %s, %s)",
+        rows
+    )
     
-    try:
-        cur.executemany(insert_query, rows)
-        conn.commit()
-        context.log.info(f"Successfully loaded {len(rows)} rows into {table_name}")
-    except Exception as e:
-        context.log.error(f"Error loading data to Snowflake: {e}")
-        conn.rollback()
-        raise e
-    finally:
-        cur.close()
-        conn.close()
+    conn.commit()
+    cur.close()
+    context.log.info(f"✅ تم تحميل {len(df)} يوم لـ {VARIABLE}")
 
 @job
 def t2m_job():
