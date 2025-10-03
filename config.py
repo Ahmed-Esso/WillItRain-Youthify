@@ -29,7 +29,7 @@ VARIABLE_TO_DATASET = {
     # Advanced Moisture
     "T2MWET": "M2I1NXASM",
     "TQI": "M2I1NXASM",  # جرب هذا الداتاسيت,
-    "TQI": "M2I1NXASM",
+    "TQL": "M2I1NXASM",
     
     # Dynamics & Boundary
     "OMEGA500": "M2I3NVASM",
