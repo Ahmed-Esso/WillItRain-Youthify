@@ -1,10 +1,10 @@
-# final_working_pipeline.py
+# final_clean_pipeline.py
 from dagster import job, op, get_dagster_logger, Definitions
 import pandas as pd
 from datetime import datetime
 
 # ==========================
-# 1. Ops بسيطة بدون تعقيد
+# 1. Ops نظيفة تماماً - بدون Snowflake
 # ==========================
 @op
 def download_sample_data():
@@ -88,7 +88,7 @@ def save_analysis_report(stats):
     return f"تم تحليل {stats['total_records']} منطقة - {stats['excellent_areas']} منطقة ممتازة للصيد"
 
 # ==========================
-# 2. Jobs - بدون Snowflake في البداية
+# 2. Jobs نظيفة - بدون أي mention لـ Snowflake
 # ==========================
 @job
 def marine_analysis_job():
@@ -109,9 +109,9 @@ def quick_test_job():
     save_analysis_report(results)
 
 # ==========================
-# 3. التعريفات النهائية - بدون Resources
+# 3. التعريفات النهائية - نظيفة تماماً
 # ==========================
 defs = Definitions(
     jobs=[marine_analysis_job, quick_test_job]
-    # ⭐ لا يوجد resources هنا - علشان كده هتشغل
+    # ⭐ لا يوجد resources إطلاقاً
 )
