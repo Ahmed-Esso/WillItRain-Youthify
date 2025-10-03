@@ -51,20 +51,30 @@ def process_file_omega(context, granule):
             context.log.warning("No pressure levels found")
             return pd.DataFrame()
         
-        # ابحث عن أقرب مستوى لـ 500 hPa
-        target_pressure = 50000  # 500 hPa in Pa
-        available_levels = [lev for lev in pressure_levels if 30000 <= lev <= 70000]
+        # اختر أفضل مستوى لـ OMEGA (~500 hPa)
+        # المستويات المفضلة بالترتيب: 32, 30, 35, 28, 25
+        preferred_levels = [32, 30, 35, 28, 25]
+        selected_level = None
         
-        if available_levels:
-            closest_level = min(available_levels, key=lambda x: abs(x - target_pressure))
-            context.log.info(f"Using pressure level {closest_level} Pa for ~500 hPa")
-            
-            # استخرج البيانات عند هذا المستوى
-            ds_level = ds[[VARIABLE]].sel({pressure_coord: closest_level})
-            df = ds_level.to_dataframe().reset_index()
-        else:
-            context.log.warning("No pressure levels near 500 hPa found")
-            return pd.DataFrame()
+        for level in preferred_levels:
+            if level in pressure_levels:
+                selected_level = level
+                context.log.info(f"Using pressure level {selected_level} for OMEGA500")
+                break
+        
+        if selected_level is None:
+            # إذا مفيش المستويات المفضلة، استخدم أي مستوى في النطاق 25-35
+            available_levels = [lev for lev in pressure_levels if 25 <= lev <= 35]
+            if available_levels:
+                selected_level = available_levels[0]
+                context.log.info(f"Using alternative pressure level {selected_level} for OMEGA500")
+            else:
+                context.log.warning("No suitable pressure level found (25-35)")
+                return pd.DataFrame()
+        
+        # استخرج البيانات عند المستوى المختار
+        ds_level = ds[[VARIABLE]].sel({pressure_coord: selected_level})
+        df = ds_level.to_dataframe().reset_index()
         
         # فلترة حسب الإسكندرية
         df = df[
@@ -76,7 +86,7 @@ def process_file_omega(context, granule):
         df = df.rename(columns={VARIABLE: "OMEGA500"})
         
         ds.close()
-        context.log.info(f"Processed {len(df)} OMEGA500 data points")
+        context.log.info(f"Processed {len(df)} OMEGA500 data points at level {selected_level}")
         return df[["time", "OMEGA500"]]
         
     except Exception as e:
