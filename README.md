@@ -6,8 +6,7 @@
 
 **A professional weather forecasting web application powered by NASA climate data and advanced machine learning models.**
 
-🌐 **Live Demo:** [Visit App](https://your-app.streamlit.app) (Coming Soon!)
-
+🌐 **Live Demo:** [Visit App](https://willitrain-youthify.streamlit.app) 
 ---
 
 ## 📋 Table of Contents
