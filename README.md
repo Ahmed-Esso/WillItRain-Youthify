@@ -1,4 +1,4 @@
-# 🌧️ Will It Rain? - NASA Space Apps Challenge 2024
+# 🌧️ Will It Rain? - NASA Space Apps Challenge 2025
 
 [![NASA](https://img.shields.io/badge/NASA-Space%20Apps%20Challenge-blue.svg)](https://www.spaceappschallenge.org/)
 [![Python](https://img.shields.io/badge/Python-3.8+-green.svg)](https://www.python.org/)
@@ -251,6 +251,6 @@ For questions, collaboration, or feedback:
 
 **⭐ If you found this project useful, please consider giving it a star! ⭐**
 
-Made with ❤️ for NASA Space Apps Challenge 2024
+Made with ❤️ for NASA Space Apps Challenge 2025
 
 </div>
