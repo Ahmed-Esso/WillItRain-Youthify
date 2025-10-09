@@ -1,256 +1,335 @@
-# 🌧️ Will It Rain? - NASA Space Apps Challenge 2025
-
-[![NASA](https://img.shields.io/badge/NASA-Space%20Apps%20Challenge-blue.svg)](https://www.spaceappschallenge.org/)
-[![Python](https://img.shields.io/badge/Python-3.8+-green.svg)](https://www.python.org/)
-[![Jupyter](https://img.shields.io/badge/Jupyter-Notebook-orange.svg)](https://jupyter.org/)
-[![Plotly](https://img.shields.io/badge/Plotly-Interactive%20Viz-purple.svg)](https://plotly.com/)
-
-## 📋 Project Overview
-
-**Will It Rain?** is a comprehensive weather prediction system developed for the NASA Space Apps Challenge. This project leverages NASA's climate data to build multiple machine learning models that predict various weather phenomena, with a special focus on precipitation forecasting.
-
-Our solution combines **6 specialized prediction models** with **interactive visualizations** to provide accurate, real-time weather insights for Alexandria, Egypt.
-
----
-
-## 🎯 Challenge Description
-
-The NASA Space Apps Challenge asks: **"Will It Rain?"** - Can we predict precipitation using satellite and climate data?
-
-Our team tackled this challenge by:
-- 🔍 Analyzing NASA POWER (Prediction Of Worldwide Energy Resources) data
-- 🤖 Building ensemble machine learning models
-- 📊 Creating interactive dashboards for weather visualization
-- 🌍 Focusing on Alexandria, Egypt as our test location
-
----
-
-## ✨ Features
-
-### 🤖 Machine Learning Models (6 Total)
-
-| Model | Type | Purpose | Key Variables |
-|-------|------|---------|---------------|
-| **☁️ Fog & Visibility** | Regression | Predict visibility conditions | TEMP_DEW_DIFF, HUMIDITY, WIND_SPEED |
-| **💧 Precipitation Amount** | Regression | Forecast rainfall amount (mm) | ICE_CONTENT, LIQUID_WATER, HUMIDITY |
-| **🌬️ Air Quality** | Regression | Assess air quality index | WIND_SPEED, TEMP, SURFACE_PRESSURE |
-| **🌡️ Thermal Comfort** | Regression | Calculate heat index & comfort | HEAT_INDEX, WIND_CHILL, HUMIDITY |
-| **🌦️ Rain Prediction** | Classification | Binary rain forecast (Yes/No) | TOTAL_MOISTURE, HUMIDITY, LIQUID_WATER |
-| **⛈️ Storm Intensity** | Regression | Predict severe storm strength | **OMEGA500**, WIND_SPEED, ICE_CONTENT |
-
-### 📊 Interactive Visualizations
-
-- 📈 **Multi-panel Weather Dashboard** - Real-time climate metrics with custom color schemes
-- 🗺️ **Correlation Heatmaps** - Understand relationships between weather variables
-- 🎬 **Animated Time Series** - Visualize climate evolution over months
-- 🎯 **Live Infographics** - Gauge indicators for current conditions
-- 🍩 **Weather Distribution Charts** - Classify and display weather patterns
-- 🌀 **Storm Analysis** - Detailed visualizations for severe weather events
-
----
-
-## 🛠️ Technology Stack
-
-```python
-# Core Libraries
-- Python 3.8+
-- Pandas, NumPy          # Data manipulation
-- Scikit-learn           # Machine learning
-- Plotly                 # Interactive visualizations
-- Matplotlib, Seaborn    # Static plots
-
-# Data Source
-- Snowflake              # Cloud data warehouse
-- NASA POWER API         # Climate data
-```
-
----
-
-## 📁 Project Structure
-
-```
-nasa-will-it-rain/
-│
-├── NASA_ALL_MODELS_MERGED.ipynb      # Complete model collection
-│   ├── 6 ML Models (Fog, Rain, Storm, etc.)
-│   ├── Model training & evaluation
-│   └── Comprehensive visualizations
-│
-├── Visualization_modifier.ipynb       # Interactive dashboards
-│   ├── Plotly dashboard implementations
-│   ├── Custom color schemes (#6640b2, #00cccb, #d8d8d8)
-│   └── Live infographics & animations
-│
-├── README.md                          # This file
-└── requirements.txt                   # Python dependencies
-```
-
----
-
-## 🚀 Quick Start
-
-### 1️⃣ Clone the Repository
-```bash
-git clone https://github.com/your-username/nasa-will-it-rain.git
-cd nasa-will-it-rain
-```
-
-### 2️⃣ Install Dependencies
-```bash
-pip install -r requirements.txt
-```
-
-### 3️⃣ Configure Snowflake Connection
-Update the connection parameters in the notebooks:
-```python
-conn = snowflake.connector.connect(
-    user="YOUR_USERNAME",
-    password="YOUR_PASSWORD",
-    account="YOUR_ACCOUNT_ID",
-    warehouse="NASA_WH",
-    database="NASA_DB",
-    schema="PUBLIC"
-)
-```
-
-### 4️⃣ Run the Notebooks
-```bash
-jupyter notebook NASA_ALL_MODELS_MERGED.ipynb
-```
-
----
-
-## 📊 Dataset
-
-### NASA POWER Data Variables
-
-| Variable | Description | Unit |
-|----------|-------------|------|
-| **T2M** | Temperature at 2 meters | °C |
-| **T2MDEW** | Dew point temperature | °C |
-| **QV2M** | Specific humidity | g/kg |
-| **TQL** | Liquid water content | kg/m² |
-| **TQI** | Ice content | kg/m² |
-| **U10M/V10M** | Wind components | m/s |
-| **PS** | Surface pressure | kPa |
-| **SLP** | Sea level pressure | kPa |
-| **OMEGA500** | Vertical velocity at 500mb | Pa/s |
-
-**Coverage:** Alexandria, Egypt (2020-2023)  
-**Temporal Resolution:** Daily averages
-
----
-
-## 🎨 Visualization Gallery
-
-### Dashboard Color Scheme
-- **Primary (Purple):** `#6640b2` - Strong positive correlations, key metrics
-- **Secondary (Cyan):** `#00cccb` - Temperature, negative correlations
-- **Background:** `#d8d8d8` - Clean, professional grey
-
-### Sample Outputs
-
-#### 1. Main Weather Dashboard
-Multi-panel view showing:
-- Temperature trends with smooth splines
-- Wind speed distribution histograms
-- Ice content evolution
-- Weather quality index with deep fill effects
-
-#### 2. Rain Prediction Model (January 2023)
-- **Accuracy:** 94.7%
-- **Precision:** 0.92
-- **Recall:** 0.89
-- Visual comparison: Predicted vs. Actual rain days
-
-#### 3. Storm Intensity Analysis
-- **R² Score:** 0.87
-- **RMSE:** 2.34
-- Feature importance highlighting **OMEGA500** (25% contribution)
-
----
-
-## 📈 Model Performance
-
-| Model Name | R² Score | RMSE | MAE | Accuracy |
-|------------|----------|------|-----|----------|
-| Fog & Visibility | 0.89 | 3.21 | 2.45 | - |
-| Precipitation Amount | 0.82 | 0.74 | 0.58 | - |
-| Air Quality | 0.85 | 4.12 | 3.20 | - |
-| Thermal Comfort | 0.91 | 2.87 | 2.10 | - |
-| Rain Prediction | - | - | - | **94.7%** |
-| Storm Intensity | 0.87 | 2.34 | 1.89 | - |
-
----
-
-## 🔬 Key Insights
-
-1. **OMEGA500 is Critical for Storms**  
-   Vertical velocity at 500mb atmospheric level is the strongest predictor of storm intensity (25% feature importance). Negative values indicate upward air motion, correlating with severe weather.
-
-2. **Temperature-Dewpoint Difference for Fog**  
-   The gap between temperature and dew point is the best indicator of fog formation and visibility conditions.
-
-3. **Total Moisture Index Predicts Rain**  
-   Combining ice content and liquid water content provides the most accurate binary rain prediction (94.7% accuracy).
-
-4. **Seasonal Patterns in Alexandria**  
-   Winter months (December-February) show 3x higher precipitation probability compared to summer months.
-
----
-
-## 🎓 Team & Contributions
-
-This project was developed for the **NASA Space Apps Challenge 2024**.
-
-**Team Members:**
-- 👨‍💻 Data Science & ML Models
-- 👩‍💻 Visualization & Dashboard Design
-- 👨‍🔬 Climate Data Analysis
-- 👩‍🔬 Model Validation & Testing
-
----
-
-## 📝 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
----
-
-## 🙏 Acknowledgments
-
-- **NASA POWER Project** for providing comprehensive climate data
-- **Snowflake** for cloud data warehousing
-- **Plotly Team** for interactive visualization tools
-- **NASA Space Apps Challenge** organizers and mentors
-
----
-
-## 📧 Contact
-
-For questions, collaboration, or feedback:
-
-- 📧 Email: your.email@example.com
-- 🐙 GitHub: [@your-username](https://github.com/your-username)
-- 🌐 NASA Space Apps: [Project Page](https://www.spaceappschallenge.org/)
-
----
-
-## 🔮 Future Enhancements
-
-- [ ] Real-time API integration for live predictions
-- [ ] Mobile app deployment
-- [ ] Expand to multiple cities worldwide
-- [ ] Deep learning models (LSTM, Transformers)
-- [ ] Ensemble model stacking for improved accuracy
-- [ ] Integration with IoT weather stations
-
----
-
-<div align="center">
-
-**⭐ If you found this project useful, please consider giving it a star! ⭐**
-
-Made with ❤️ for NASA Space Apps Challenge 2025
-
-</div>
+project:
+  name: "Will It Rain?"
+  challenge: "NASA Space Apps Challenge 2025"
+  theme: "Weather Prediction & Climate Analysis"
+  description: >
+    Will It Rain? is an AI-powered weather prediction system built for the NASA Space Apps Challenge 2025.
+    It uses NASA POWER satellite data to forecast precipitation, fog, air quality, thermal comfort, and storm intensity
+    for Alexandria, Egypt (2020–2023). The solution integrates Snowflake Cloud, Python, and Plotly for
+    end-to-end analysis, visualization, and model deployment.
+
+  location: "Alexandria, Egypt"
+  period: "2020–2023"
+  goal: "Predict rainfall, visibility, air quality, comfort, and storm intensity using real NASA data."
+
+  team:
+    - role: "Data Science & Machine Learning"
+      responsibility: "Model training, feature engineering, evaluation"
+    - role: "Visualization & UI"
+      responsibility: "Interactive dashboards using Plotly"
+    - role: "Climate Data Analysis"
+      responsibility: "Data cleaning, extraction, preprocessing"
+    - role: "Validation & Testing"
+      responsibility: "Model tuning and verification"
+
+  data:
+    source: "NASA POWER (Prediction Of Worldwide Energy Resources)"
+    link: "https://power.larc.nasa.gov/"
+    storage: "Snowflake Cloud Data Warehouse"
+    coverage: "Alexandria, Egypt (2020–2023)"
+    resolution: "Daily averages"
+    variables:
+      - { name: "T2M", description: "Temperature at 2 meters", unit: "°C" }
+      - { name: "T2MDEW", description: "Dew point temperature", unit: "°C" }
+      - { name: "QV2M", description: "Specific humidity", unit: "g/kg" }
+      - { name: "TQI", description: "Total ice in clouds", unit: "kg/m²" }
+      - { name: "TQL", description: "Total liquid in clouds", unit: "kg/m²" }
+      - { name: "OMEGA500", description: "Vertical air velocity", unit: "Pa/s" }
+      - { name: "U10M", description: "Wind speed (U component)", unit: "m/s" }
+      - { name: "V10M", description: "Wind speed (V component)", unit: "m/s" }
+      - { name: "PS", description: "Surface pressure", unit: "kPa" }
+      - { name: "SLP", description: "Sea level pressure", unit: "kPa" }
+
+  models:
+    - name: "Fog & Visibility"
+      type: "Regression"
+      purpose: "Predict fog and visibility range"
+      features: ["TEMP_DEW_DIFF", "HUMIDITY", "WIND_SPEED"]
+      performance: { R2: 0.89, RMSE: 3.21 }
+
+    - name: "Precipitation Amount"
+      type: "Regression"
+      purpose: "Forecast rainfall (mm)"
+      features: ["TQI", "TQL", "HUMIDITY"]
+      performance: { R2: 0.82, RMSE: 0.74 }
+
+    - name: "Air Quality"
+      type: "Regression"
+      purpose: "Estimate air quality index (AQI)"
+      features: ["WIND_SPEED", "T2M", "PS"]
+      performance: { R2: 0.85, RMSE: 4.12 }
+
+    - name: "Thermal Comfort"
+      type: "Regression"
+      purpose: "Compute comfort/heat index"
+      features: ["T2M", "QV2M", "U10M", "V10M"]
+      performance: { R2: 0.91, RMSE: 2.87 }
+
+    - name: "Rain Prediction"
+      type: "Classification"
+      purpose: "Binary classification (Rain / No Rain)"
+      features: ["TOTAL_MOISTURE", "HUMIDITY", "LIQUID_WATER"]
+      performance: { Accuracy: 94.7 }
+
+    - name: "Storm Intensity"
+      type: "Regression"
+      purpose: "Estimate storm strength"
+      features: ["OMEGA500", "WIND_SPEED", "ICE_CONTENT", "TEMP_DIFF"]
+      performance: { R2: 0.87, RMSE: 2.34 }
+
+  key_findings:
+    - "OMEGA500 (vertical motion) was the strongest storm predictor (25% importance)."
+    - "Temperature–Dewpoint difference was the most accurate fog indicator."
+    - "Combining TQI + TQL improved rainfall classification performance."
+
+  visualization:
+    tools: ["Plotly", "Python"]
+    features:
+      - "Multi-panel dashboard with real-time weather metrics"
+      - "Animated time-series of temperature, humidity, and rainfall"
+      - "Correlation heatmaps showing variable interactions"
+      - "Storm intensity gauge and rainfall distribution charts"
+    color_scheme:
+      primary: "#6640b2"
+      secondary: "#00cccb"
+      background: "#000510"
+
+  structure:
+    root: "nasa-will-it-rain/"
+    files:
+      - "NASA_ALL_MODELS_MERGED.ipynb"
+      - "Visualization_modifier.ipynb"
+      - "requirements.txt"
+      - "README.md"
+
+  setup:
+    steps:
+      - "Clone the repository: git clone https://github.com/mayarhany/nasa-will-it-rain.git"
+      - "Install dependencies: pip install -r requirements.txt"
+      - "Configure Snowflake credentials in the notebook."
+      - "Run: jupyter notebook NASA_ALL_MODELS_MERGED.ipynb"
+
+  performance_summary:
+    regression_models_average_R2: 0.87
+    classification_model_accuracy: 94.7
+    highlights:
+      - "High model consistency across features."
+      - "Strong correlation between vertical velocity and storm strength."
+      - "Accurate short-term rainfall prediction."
+
+  future_work:
+    - "Integrate real-time weather APIs."
+    - "Develop a mobile app version."
+    - "Expand dataset to multiple regions."
+    - "Experiment with LSTM and Transformer architectures."
+    - "Use ensemble stacking for improved accuracy."
+    - "Integrate IoT-based weather sensors."
+
+  license: "MIT License"
+  acknowledgments:
+    - "NASA POWER project for providing open-access data."
+    - "Snowflake for cloud data storage."
+    - "Plotly for visualization tools."
+    - "NASA Space Apps mentors for technical support."
+
+  contact:
+    author: "Mayar Hany Rafik"
+    email: "mayarhany1999@gmail.com"
+    github: "https://github.com/mayarhany"
+    linkedin: "https://linkedin.com/in/mayar-hany-139a2a2a6"
+
+# ============================================================
+# 🌌 PROJECT METADATA (for GitHub / Docs / Pages integration)
+# ============================================================
+
+metadata:
+  title: "🌌 WILL IT RAIN? — NASA Space Apps Challenge 2025"
+  subtitle: "AI-Powered Weather Prediction System for Alexandria, Egypt"
+  theme:
+    name: "NeoSpace Dark"
+    background: "#000510"
+    card: "#0a0f2c"
+    accent_primary: "#6640b2"
+    accent_secondary: "#00cccb"
+    accent_highlight: "#b47aff"
+    text_primary: "#ffffff"
+    text_secondary: "#b0b8ff"
+    chart_colors:
+      - "#6640b2"
+      - "#00cccb"
+      - "#d8d8d8"
+      - "#b47aff"
+  tags:
+    - NASA
+    - SpaceApps2025
+    - WeatherPrediction
+    - MachineLearning
+    - ClimateData
+    - Python
+    - Plotly
+    - Snowflake
+    - AI
+  github:
+    repository: "https://github.com/mayarhany/nasa-will-it-rain"
+    stars: true
+    license: "MIT"
+    badges:
+      - name: "Python"
+        color: "#3776AB"
+        label: "Python 3.8+"
+      - name: "Plotly"
+        color: "#3F4F75"
+        label: "Interactive Dashboards"
+      - name: "Scikit-Learn"
+        color: "#F7931E"
+        label: "ML Models"
+      - name: "NASA Space Apps"
+        color: "#6640b2"
+        label: "2025 Edition"
+  author:
+    name: "Mayar Hany Rafik"
+    role: "Data Analyst & ML Engineer"
+    email: "mayarhany1999@gmail.com"
+    linkedin: "https://linkedin.com/in/mayar-hany-139a2a2a6"
+    github_profile: "https://github.com/mayarhany"
+  preview:
+    image: "assets/ui_dashboard_preview.png"
+    description: >
+      Neon-themed futuristic weather dashboard inspired by NASA’s mission interfaces.
+      Displays a 10-day forecast, precipitation predictions, and model certainty levels.
+    colors: ["#000510", "#6640b2", "#00cccb"]
+  visibility: "public"
+  license: "MIT License"
+  created: "2025-10-09"
+  last_updated: "2025-10-09"
+  version: "1.0.0"
+
+# ============================================================
+# 🌠 README CONTENT (Markdown - GitHub Display)
+# ============================================================
+
+readme: |
+  <div align="center">
+  
+  # 🌌 **WILL IT RAIN?**
+  ### *NASA Space Apps Challenge 2025 – Alexandria, Egypt*
+  
+  ![Preview](assets/ui_dashboard_preview.png)
+  
+  **AI-Powered Weather Prediction System** using NASA’s Climate Data  
+  Developed with 💜 Python, Plotly & Snowflake
+  
+  [![Python](https://img.shields.io/badge/Python-3.8+-3776AB?logo=python)]()
+  [![Plotly](https://img.shields.io/badge/Plotly-Dashboards-3F4F75?logo=plotly)]()
+  [![Scikit-Learn](https://img.shields.io/badge/Scikit--Learn-ML%20Models-F7931E?logo=scikit-learn)]()
+  [![NASA Space Apps](https://img.shields.io/badge/NASA%20Space%20Apps-2025-6640b2?logo=nasa)]()
+  
+  </div>
+
+  ---
+
+  ## 📋 **Project Overview**
+  **Will It Rain?** is a comprehensive weather prediction system that leverages NASA’s POWER climate datasets to build six machine learning models predicting various atmospheric conditions — from precipitation and fog to storm intensity and air quality.
+
+  The project combines advanced regression and classification models with **interactive visualizations** using Plotly and Jupyter Notebooks.
+
+  ---
+
+  ## 🎯 **Challenge Description**
+  > “Can we predict precipitation using satellite and climate data?”
+  
+  Our team focused on **Alexandria, Egypt**, analyzing multi-year NASA POWER data to forecast local weather dynamics.  
+  Using ensemble ML techniques, we predicted precipitation probability, type, and storm severity.
+
+  ---
+
+  ## ⚙️ **Machine Learning Models**
+  | Model | Type | Purpose | Key Variables |
+  |--------|------|----------|----------------|
+  | ☁️ Fog & Visibility | Regression | Predict visibility levels | TEMP_DEW_DIFF, HUMIDITY, WIND_SPEED |
+  | 💧 Precipitation Amount | Regression | Forecast rainfall (mm) | ICE_CONTENT, LIQUID_WATER, HUMIDITY |
+  | 🌬️ Air Quality | Regression | Assess AQI | WIND_SPEED, TEMP, PRESSURE |
+  | 🌡️ Thermal Comfort | Regression | Compute heat index | HEAT_INDEX, HUMIDITY, WIND_CHILL |
+  | 🌦️ Rain Prediction | Classification | Binary rain forecast | TOTAL_MOISTURE, HUMIDITY |
+  | ⛈️ Storm Intensity | Regression | Estimate storm strength | OMEGA500, WIND_SPEED, ICE_CONTENT |
+
+  ---
+
+  ## 🎨 **Dashboard & Visualizations**
+  Built with **Plotly**, **Matplotlib**, and **Seaborn**, featuring a **neon cyber-space theme**.
+
+  - 📈 Multi-panel dashboards  
+  - 🗺️ Interactive heatmaps & infographics  
+  - 🎬 Animated time-series  
+  - 🍩 Weather distribution charts  
+  - 🌀 Storm analysis interface  
+
+  ---
+
+  ## 🧠 **Model Insights**
+  - **OMEGA500** → Strongest indicator of storm intensity (25% importance)  
+  - **T2M - T2MDEW** → Best fog predictor  
+  - **TQI + TQL** → Key to precipitation type (rain/snow/hail)  
+  - **Thermal Comfort Index** correlates with humidity + wind speed  
+  - **Seasonality** → Rain probability 3× higher in winter months  
+
+  ---
+
+  ## 🧰 **Tech Stack**
+  - **Python 3.8+**
+  - **Scikit-Learn, Pandas, NumPy**
+  - **Plotly & Matplotlib**
+  - **Snowflake (Cloud Data Warehouse)**
+  - **NASA POWER API (Data Source)**
+
+  ---
+
+  ## 📈 **Performance Summary**
+  | Model | R² | RMSE | Accuracy |
+  |--------|-----|------|-----------|
+  | Fog & Visibility | 0.89 | 3.21 | - |
+  | Precipitation Amount | 0.82 | 0.74 | - |
+  | Air Quality | 0.85 | 4.12 | - |
+  | Thermal Comfort | 0.91 | 2.87 | - |
+  | Rain Prediction | - | - | **94.7%** |
+  | Storm Intensity | 0.87 | 2.34 | - |
+
+  ---
+
+  ## 🌍 **Data Details**
+  - **Source:** NASA POWER (Prediction Of Worldwide Energy Resources)
+  - **Location:** Alexandria, Egypt
+  - **Period:** 2020–2023
+  - **Resolution:** Daily averages
+
+  ---
+
+  ## 🔮 **Future Enhancements**
+  - Real-time API integration  
+  - Deep learning (LSTM, Transformers)  
+  - Expansion to multiple cities  
+  - IoT weather station inputs  
+  - Streamlit / Web app deployment  
+
+  ---
+
+  ## 🧑‍🚀 **Team & Credits**
+  Developed with ❤️ for **NASA Space Apps Challenge 2025**
+
+  **Team Roles:**
+  - 👩‍💻 *Data Science & ML Models*  
+  - 👨‍🔬 *Climate Analysis & Research*  
+  - 👩‍🎨 *Visualization & Dashboard Design*  
+  - 👨‍💻 *Testing & Model Evaluation*
+
+  **Acknowledgments:**
+  - NASA POWER Project  
+  - Snowflake  
+  - Plotly Team  
+  - Space Apps Mentors
+
+  ---
+
+  ## 📜 **License**
+  Licensed under the **MIT License**.  
+  © 2025 Mayar Hany Rafik — All Rights Reserved.
