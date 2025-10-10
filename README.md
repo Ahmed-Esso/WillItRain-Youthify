@@ -330,10 +330,6 @@ This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) 
 - 🐛 Issues: [Report Bug](https://github.com/Ahmed-Esso/WillItRain-Youthify/issues)
 - 💡 Features: [Request Feature](https://github.com/Ahmed-Esso/WillItRain-Youthify/issues)
 
-**✉️ Team Contact:**
-- Email: contact@youthify-team.com
-- Twitter: [@YouthifyTeam](https://twitter.com/YouthifyTeam) (if applicable)
-
 ---
 
 ## 🔮 Roadmap & Future Enhancements
@@ -388,19 +384,25 @@ This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) 
 ## 📸 Screenshots & Demo
 
 ### Hero Section
-![Weather Station Hero](link-to-screenshot)
+<img width="1920" height="1080" alt="Screenshot 2025-10-10 171021" src="https://github.com/user-attachments/assets/178a4842-58ba-421c-9699-65d7d445570e" />
+
 *Massive temperature display with live metrics*
 
 ### Rain Prediction
-![Prediction Interface](link-to-screenshot)
+<img width="1920" height="1080" alt="Screenshot 2025-10-10 171040" src="https://github.com/user-attachments/assets/c3556b7b-8a54-449e-afa7-ad29e8c4a0e5" />
+
 *Clear YES/NO answer with confidence percentage*
 
 ### 10-Day Forecast
-![Forecast Grid](link-to-screenshot)
+<img width="1920" height="1080" alt="Screenshot 2025-10-10 171112" src="https://github.com/user-attachments/assets/a4482cdc-694c-48dc-b9f8-c1b0d2f74d8e" />
+
 *Beautiful weather cards with temperature ranges*
 
 ### Analytics Dashboard
-![Charts & Gauges](link-to-screenshot)
+<img width="1920" height="1080" alt="Screenshot 2025-10-10 171121" src="https://github.com/user-attachments/assets/4c8da064-db70-4b3b-9b76-094b52be23bf" />
+<img width="1920" height="1080" alt="Screenshot 2025-10-10 171457" src="https://github.com/user-attachments/assets/70c077d0-3c64-473d-97f0-721cdac4941d" />
+<img width="1920" height="1080" alt="Screenshot 2025-10-10 171440" src="https://github.com/user-attachments/assets/7528b01c-8d61-450d-96ed-f585609c5fb6" />
+
 *Interactive temperature trends and wind gauges*
 
 *Screenshots will be updated post-deployment*
