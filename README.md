@@ -47,6 +47,20 @@ Our team's approach:
 | **💨 Wind Analysis** | Real-time | Speed gauges with visual indicators |
 | **🌫️ Air Quality Index** | Environmental | AQI calculations with health recommendations |
 
+### 🔄 Data Pipeline Architecture
+
+```
+NASA DISC (GES DISC) → Dagster Cloud → Snowflake → Streamlit App
+     ↓                      ↓              ↓            ↓
+Climate Data       Orchestration    Data Warehouse   Live UI
+```
+
+**Data Flow:**
+1. **Source:** NASA GES DISC (Goddard Earth Sciences Data and Information Services Center)
+2. **ETL:** Dagster Cloud orchestrates data extraction and transformation
+3. **Storage:** Snowflake cloud data warehouse for efficient querying
+4. **Application:** Streamlit app queries Snowflake for predictions
+
 ### 📊 Interactive Visualizations
 
 - 🌡️ **Temperature Trends** - 7-day interactive line charts with Plotly
@@ -406,8 +420,6 @@ This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) 
 *Interactive temperature trends and wind gauges*
 
 *Screenshots will be updated post-deployment*
-
----
 
 ## 🌟 Why This Project Stands Out
 
