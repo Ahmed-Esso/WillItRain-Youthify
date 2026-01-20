@@ -302,11 +302,13 @@ App dynamically recalculates when:
 
 This project was developed for the **NASA Space Apps Challenge 2025**.
 
-**Team Lead:**
-- 👨‍💻 **Ahmed Esso** - Full-stack Developer & Designer
-  - GitHub: [@Ahmed-Esso](https://github.com/Ahmed-Esso)
-  - Role: UI/UX design, ML algorithms, deployment
-
+## 👥 The Team
+This work was a collaborative effort by:
+* **[@Ahmed-Esso](https://github.com/Ahmed-Esso)** | [LinkedIn](https://www.linkedin.com/in/-ahmed-essam-/) (Team Leader)
+* **[@Mayar-Hany](https://github.com/Mayar-hany-2005)** | [LinkedIn](https://www.linkedin.com/in/mayar-h-139a2a2a6)
+* **[@AZAM-56](https://github.com/AZAM-56)** | [LinkedIn](https://www.linkedin.com/in/ahmed-ehab-3081962a4/)
+* **[@ZiadAbdeen](https://github.com/ZiadAbdeen)** | [LinkedIn](https://www.linkedin.com/in/ziad-abdeen-kamal-a138a0356/)
+  
 **Core Contributors:**
 - 📊 Data Science & ML Models
 - 🎨 Visualization & Dashboard Design  
